@@ -112,7 +112,7 @@ const Impostazioni: React.FC = () => {
     const keys = ['subdata','anagrafica','cal_events','storico','access_log','users','settings','docdata','alerts'];
     const backup: any = { version: '2.0', exported: new Date().toISOString(), data: {} };
     keys.forEach(k => {
-      try { const v = localStorage.getItem('pser_' + k); if (v) backup.data[k] = JSON.parse(v); } catch {}
+      try { const v = localStorage.getItem(k); if (v) backup.data[k] = JSON.parse(v); } catch {}
     });
     const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -130,7 +130,7 @@ const Impostazioni: React.FC = () => {
         const backup = JSON.parse(evt.target?.result as string);
         if (!backup.data) { alert('File non valido'); return; }
         Object.entries(backup.data).forEach(([k, v]) => {
-          localStorage.setItem('pser_' + k, JSON.stringify(v));
+          localStorage.setItem(k, JSON.stringify(v));
         });
         alert('Backup ripristinato. Ricarica la pagina per applicare.');
       } catch { alert('Errore nel file di backup'); }
@@ -141,9 +141,9 @@ const Impostazioni: React.FC = () => {
   const handleResetData = (type: 'subdata' | 'anagrafica' | 'all') => {
     if (!confirm(type === 'all' ? 'RESET COMPLETO: tutti i dati verranno eliminati. Continuare?' : `Reset ${type}?`)) return;
     if (type === 'all') {
-      ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem('pser_' + k));
+      ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem(k));
     } else {
-      localStorage.removeItem('pser_' + type);
+      localStorage.removeItem(type);
     }
     window.location.reload();
   };
@@ -698,7 +698,7 @@ const Impostazioni: React.FC = () => {
             <button
               onClick={() => {
                 if (resetConfirmInput !== 'RESET CONFERMATO') return;
-                ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem('pser_' + k));
+                ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem(k));
                 setShowResetModal(false);
                 setResetConfirmInput('');
                 window.location.reload();

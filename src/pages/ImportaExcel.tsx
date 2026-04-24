@@ -20,7 +20,10 @@ import {
   FileText,
   Terminal,
   Link,
-  LayoutGrid
+  LayoutGrid,
+  Mail,
+  Bell,
+  Sun
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
@@ -287,8 +290,14 @@ const ImportaExcel: React.FC = () => {
           <p className="text-xs text-[#3a5a7a] mt-1">Carica il file elaborato dal portale aziendale — il sistema rileva automaticamente nuovi record e aggiornamenti.</p>
         </div>
         <div className="flex items-center gap-2.5">
-          <button className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 transition-all">
-            <FileText size={18} />
+          <button className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 hover:text-[#378ADD] transition-all">
+            <Mail size={18} />
+          </button>
+          <button className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 hover:text-[#378ADD] transition-all">
+            <Bell size={18} />
+          </button>
+          <button className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 hover:text-[#f5c842] transition-all">
+            <Sun size={18} />
           </button>
           <div className="h-10 flex items-center px-3 bg-white/5 border border-white/10 rounded-xl text-[11px] text-[#8ab0c8] font-medium whitespace-nowrap capitalize">
             {format(new Date(), 'EEEE d MMM yyyy', { locale: it })}

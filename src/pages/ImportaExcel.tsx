@@ -118,10 +118,11 @@ const ImportaExcel: React.FC = () => {
   const { subaffidamenti, setSubaffidamenti, addActivity } = useData();
   const { user } = useAuth();
 
-  const [step, setStep] = useState<'upload' | 'preview' | 'importing' | 'success'>('upload');
+  const [step, setStep] = useState<'upload' | 'preview' | 'review' | 'importing' | 'success'>('upload');
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [progress, setProgress] = useState(0);
-  const [summaryStats, setSummaryStats] = useState({ nuovi: 0, aggiornati: 0, saltati: 0 });
+  const [summaryStats, setSummaryStats] = useState({ nuovi: 0, aggiornati: 0, mantenuti: 0, saltati: 0, appaltatori: 0, documenti: 0 });
+  const [importLog, setImportLog] = useState<string[]>([]);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [bulkAction, setBulkAction] = useState<DupAction | null>(null);
 
@@ -232,41 +233,37 @@ const ImportaExcel: React.FC = () => {
       if (count >= 100) {
         clearInterval(interval);
 
-        let nuovi = 0;
-        let aggiornati = 0;
-        let saltati = 0;
+        let nuovi = 0, aggiornati = 0, mantenuti = 0, saltati = 0;
+        const log: string[] = [];
 
         setSubaffidamenti(prev => {
           const updated = [...prev];
-
           for (const row of parsedRows) {
             const { _status, _existingIdx, _dupAction, _changedFields, ...record } = row;
-
             if (_status === 'new') {
               updated.unshift(record as Subaffidamento);
               nuovi++;
+              log.push(`— Inserito: ${record.id}`);
             } else if (_status === 'dup_same') {
-              saltati++;
+              mantenuti++;
+              log.push(`— Mantenuto: ${record.id} (nessuna modifica)`);
             } else if (_status === 'dup_changed') {
               if (_dupAction === 'update' && _existingIdx !== null) {
                 updated[_existingIdx] = { ...updated[_existingIdx], ...record } as Subaffidamento;
                 aggiornati++;
+                log.push(`— Aggiornato: ${record.id} (${_changedFields.length} campi)`);
               } else {
                 saltati++;
+                log.push(`— Saltato: ${record.id}`);
               }
             }
           }
-
           return updated;
         });
 
-        setSummaryStats({ nuovi, aggiornati, saltati });
-        addActivity(
-          'import',
-          'Importazione Excel',
-          `Import: ${nuovi} nuovi, ${aggiornati} aggiornati, ${saltati} saltati`,
-          `File elaborato — ${parsedRows.length} righe totali`
-        );
+        setSummaryStats({ nuovi, aggiornati, mantenuti, saltati, appaltatori: 0, documenti: 0 });
+        setImportLog(log);
+        addActivity('import', 'Importazione Excel', `Import: ${nuovi} nuovi, ${aggiornati} aggiornati, ${mantenuti} mantenuti, ${saltati} saltati`, `File elaborato — ${parsedRows.length} righe totali`);
         setStep('success');
       }
     }, 80);
@@ -283,23 +280,62 @@ const ImportaExcel: React.FC = () => {
       {/* TOPBAR */}
       <div className="flex justify-between items-start">
         <div>
-          <h1 className="text-lg font-bold text-[#ddeeff] tracking-tight">Importa da Excel</h1>
-          <p className="text-xs text-[#3a5a7a] mt-1">
-            Carica il file elaborabili — il sistema rileva automaticamente nuovi record e aggiornamenti
-          </p>
+          <h1 className="text-base font-semibold text-[#ddeeff]">Importa da Excel</h1>
+          <p className="text-xs text-[#3a5a7a] mt-1">Carica il file elaborato dal portale aziendale — il sistema rileva automaticamente nuovi record e aggiornamenti.</p>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="text-[11px] text-[#4a6a8a] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 font-medium">
-            {format(new Date(), 'dd MMMM yyyy', { locale: it })}
+        <div className="flex items-center gap-2.5">
+          <button className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 transition-all">
+            <FileText size={18} />
+          </button>
+          <div className="h-10 flex items-center px-3 bg-white/5 border border-white/10 rounded-xl text-[11px] text-[#8ab0c8] font-medium whitespace-nowrap capitalize">
+            {format(new Date(), 'EEEE d MMM yyyy', { locale: it })}
           </div>
           <div className="flex items-center gap-2 text-[11px] text-[#4a6a8a] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
-            <div className="w-6 h-6 rounded-full bg-[#1e3550] flex items-center justify-center text-[10px] text-[#8ab0c8] font-semibold">
-              {user?.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#534AB7] to-[#378ADD] flex items-center justify-center text-[10px] text-white font-bold shadow-[0_0_10px_rgba(83,74,183,0.4)]">
+              {user?.nome?.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()}
             </div>
-            {user?.nome}
+            <span className="text-[#c8ddf0] font-medium">{user?.nome}</span>
           </div>
         </div>
       </div>
+
+      {/* PROGRESS BAR */}
+      {step !== 'importing' && (
+        <div className="flex items-center gap-0">
+          {[
+            { id: 'upload',  label: 'Carica File',  n: 1 },
+            { id: 'preview', label: 'Anteprima',     n: 2 },
+            { id: 'review',  label: 'Riepilogo',     n: 3 },
+            { id: 'success', label: 'Completato',    n: 4 },
+          ].map((s, i, arr) => {
+            const order = ['upload','preview','review','success'];
+            const curIdx = order.indexOf(step);
+            const sIdx = order.indexOf(s.id);
+            const done = sIdx < curIdx;
+            const active = sIdx === curIdx;
+            return (
+              <React.Fragment key={s.id}>
+                <div className="flex items-center gap-2">
+                  <div className={cn(
+                    'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border transition-all',
+                    done ? 'bg-[#1D9E75] border-[#1D9E75] text-white' :
+                    active ? 'bg-[#534AB7] border-[#534AB7] text-white shadow-[0_0_12px_rgba(83,74,183,0.4)]' :
+                    'bg-white/5 border-white/10 text-[#3a5a7a]'
+                  )}>
+                    {done ? <Check size={12} /> : s.n}
+                  </div>
+                  <span className={cn('text-[11px] font-bold whitespace-nowrap', active ? 'text-[#ddeeff]' : done ? 'text-[#1D9E75]' : 'text-[#3a5a7a]')}>
+                    {s.label}
+                  </span>
+                </div>
+                {i < arr.length - 1 && (
+                  <div className={cn('flex-1 h-px mx-3', sIdx < curIdx ? 'bg-[#1D9E75]/40' : 'bg-white/8')} />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
 
       {/* STEP: UPLOAD */}
       {step === 'upload' && (
@@ -607,9 +643,9 @@ const ImportaExcel: React.FC = () => {
           )}
 
           {/* Azioni finali */}
-          <div className="flex items-center gap-3 pt-2 flex-wrap">
+          <div className="bg-[#0a1628] border-t border-white/5 -mx-0 px-0 py-3 flex items-center gap-3 flex-wrap rounded-b-xl">
             <button
-              onClick={doImport}
+              onClick={() => setStep('review')}
               disabled={pendingDecisions > 0}
               className={cn(
                 'h-11 px-6 rounded-xl text-sm font-bold transition-all flex items-center gap-2',
@@ -628,13 +664,45 @@ const ImportaExcel: React.FC = () => {
             </button>
             <div className="ml-auto text-[11px] text-[#3a5a7a] space-x-3">
               <span className="text-[#5DCAA5] font-bold">{previewStats.nuovi} nuovi</span>
-              <span className="text-[#F5A800] font-bold">
-                {parsedRows.filter(r => r._status === 'dup_changed' && r._dupAction === 'update').length} aggiornamenti
-              </span>
-              <span className="text-[#4a6a8a] font-bold">
-                {parsedRows.filter(r => r._dupAction === 'skip' || r._status === 'dup_same').length} saltati
-              </span>
+              <span>·</span>
+              <span className="text-[#F5A800] font-bold">{parsedRows.filter(r => r._status === 'dup_changed' && r._dupAction === 'update').length} agg</span>
+              <span>·</span>
+              <span className="text-[#4a6a8a] font-bold">{parsedRows.filter(r => r._dupAction === 'skip' || r._status === 'dup_same').length} saltati</span>
             </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* STEP: REVIEW */}
+      {step === 'review' && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-5">
+          <div className="bg-[#0f2035] border border-white/10 rounded-xl p-5 space-y-2">
+            <h2 className="text-sm font-bold text-[#ddeeff]">Passo 3 — Riepilogo importazione</h2>
+            <p className="text-xs text-[#3a5a7a]">Verifica il riepilogo delle operazioni da eseguire e clicca "Importa Ora" per confermare.</p>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            {[
+              { label: 'Nuovi Record',    val: previewStats.nuovi,    color: '#5DCAA5', bg: 'bg-[#1D9E75]/10'  },
+              { label: 'Da Aggiornare',   val: parsedRows.filter(r => r._status === 'dup_changed' && r._dupAction === 'update').length, color: '#F5A800', bg: 'bg-[#F5A800]/10' },
+              { label: 'Mantenuti (=)',   val: previewStats.dupSame,  color: '#a89ef8', bg: 'bg-[#534AB7]/10'  },
+              { label: 'Saltati',         val: parsedRows.filter(r => r._status === 'dup_changed' && r._dupAction === 'skip').length, color: '#4a6a8a', bg: 'bg-white/5' },
+            ].map(s => (
+              <div key={s.label} className={cn('border border-white/8 rounded-xl p-5 text-center', s.bg)}>
+                <div className="text-4xl font-bold font-mono mb-2" style={{ color: s.color }}>{s.val}</div>
+                <div className="text-[10px] text-[#3a5a7a] font-bold uppercase tracking-wider">{s.label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={doImport} className="h-12 px-8 bg-[#534AB7] text-[#e8e6f8] rounded-xl text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:bg-[#6358cc] transition-all flex items-center gap-2">
+              <Upload size={16} /> Importa Ora
+            </button>
+            <button onClick={() => setStep('preview')} className="h-12 px-6 bg-white/5 border border-white/10 rounded-xl text-[#6a8aaa] text-sm font-bold hover:bg-white/10 transition-all flex items-center gap-2">
+              <ArrowRight size={16} className="rotate-180" /> Torna all'anteprima
+            </button>
+            <button onClick={() => { setStep('upload'); setParsedRows([]); }} className="h-12 px-6 bg-white/5 border border-white/10 rounded-xl text-[#6a8aaa] text-sm font-bold hover:bg-white/10 transition-all">
+              Annulla
+            </button>
           </div>
         </motion.div>
       )}
@@ -667,45 +735,60 @@ const ImportaExcel: React.FC = () => {
 
       {/* STEP: SUCCESS */}
       {step === 'success' && (
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="bg-[#0f2035] border border-white/10 rounded-xl p-10 text-center space-y-6"
-        >
-          <div className="w-16 h-16 bg-[#1D9E75]/20 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(29,158,117,0.2)]">
-            <Check size={32} className="text-[#1D9E75]" />
-          </div>
-          <div className="space-y-1">
-            <h2 className="text-base font-bold text-[#ddeeff]">Importazione completata</h2>
-            <p className="text-xs text-[#3a5a7a]">Il sistema è stato aggiornato correttamente.</p>
+        <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-5">
+          <div className="bg-[#0f2035] border border-white/10 rounded-xl p-10 text-center space-y-3">
+            <div className="w-16 h-16 bg-[#1D9E75]/20 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(29,158,117,0.2)]">
+              <Check size={32} className="text-[#1D9E75]" />
+            </div>
+            <h2 className="text-xl font-bold text-[#ddeeff]">Importazione completata!</h2>
+            <p className="text-xs text-[#3a5a7a]">Il database è stato aggiornato correttamente.</p>
+            <div className="grid grid-cols-4 gap-3 mt-4">
+              {[
+                { label: 'Nuovi',       val: summaryStats.nuovi,       color: '#5DCAA5' },
+                { label: 'Aggiornati',  val: summaryStats.aggiornati,  color: '#F5A800' },
+                { label: 'Mantenuti',   val: summaryStats.mantenuti,   color: '#a89ef8' },
+                { label: 'Saltati',     val: summaryStats.saltati,     color: '#4a6a8a' },
+              ].map(s => (
+                <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4">
+                  <div className="text-2xl font-bold font-mono" style={{ color: s.color }}>{s.val}</div>
+                  <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-1">{s.label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto">
+              {[
+                { label: 'Appaltatori Aggiunti', val: summaryStats.appaltatori, color: '#378ADD' },
+                { label: 'Documenti Creati',     val: summaryStats.documenti,   color: '#378ADD' },
+              ].map(s => (
+                <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4">
+                  <div className="text-2xl font-bold font-mono" style={{ color: s.color }}>{s.val}</div>
+                  <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-1">{s.label}</div>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {/* Riepilogo finale */}
-          <div className="grid grid-cols-3 gap-3 max-w-md mx-auto">
-            {[
-              { label: 'Nuovi inseriti', val: summaryStats.nuovi, color: '#5DCAA5' },
-              { label: 'Aggiornati', val: summaryStats.aggiornati, color: '#F5A800' },
-              { label: 'Saltati', val: summaryStats.saltati, color: '#4a6a8a' },
-            ].map(s => (
-              <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4">
-                <div className="text-2xl font-bold font-mono" style={{ color: s.color }}>{s.val}</div>
-                <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-1">{s.label}</div>
-              </div>
-            ))}
+          {/* Log importazione */}
+          <div className="bg-[#0f2035] border border-white/10 rounded-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-white/5">
+              <span className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest">Log Importazione</span>
+            </div>
+            <div className="max-h-48 overflow-y-auto custom-scrollbar p-4 space-y-1">
+              {importLog.slice(0, 50).map((l, i) => (
+                <div key={i} className="text-[11px] text-[#4a6a8a] font-mono">{l}</div>
+              ))}
+            </div>
           </div>
 
-          <div className="flex gap-3 justify-center pt-2">
-            <button
-              onClick={() => { window.location.href = '/subaffidamenti'; }}
-              className="h-11 px-6 bg-[#534AB7] text-[#e8e6f8] rounded-xl text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:bg-[#6358cc] transition-all flex items-center gap-2"
-            >
-              Vai a Subaffidamenti
+          <div className="flex gap-3">
+            <button onClick={() => { window.location.href = '/subaffidamenti'; }} className="h-11 px-6 bg-[#534AB7] text-[#e8e6f8] rounded-xl text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:bg-[#6358cc] transition-all flex items-center gap-2">
+              <ArrowRight size={15} /> Vai a Subaffidamenti
             </button>
-            <button
-              onClick={() => { setStep('upload'); setParsedRows([]); setProgress(0); }}
-              className="h-11 px-5 bg-white/5 border border-white/10 rounded-xl text-[#6a8aaa] text-sm font-bold hover:bg-white/10 transition-all"
-            >
-              Nuova importazione
+            <button onClick={() => { window.location.href = '/'; }} className="h-11 px-6 bg-[#1D9E75]/15 border border-[#1D9E75]/35 rounded-xl text-[#5DCAA5] text-sm font-bold hover:bg-[#1D9E75]/25 transition-all flex items-center gap-2">
+              <Check size={15} /> Vai alla Dashboard
+            </button>
+            <button onClick={() => { setStep('upload'); setParsedRows([]); setProgress(0); setImportLog([]); }} className="h-11 px-5 bg-white/5 border border-white/10 rounded-xl text-[#6a8aaa] text-sm font-bold hover:bg-white/10 transition-all flex items-center gap-2">
+              <Upload size={15} /> Nuova Importazione
             </button>
           </div>
         </motion.div>

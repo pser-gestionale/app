@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   User as UserIcon, Lock, Palette, Bell, Database, Upload,
   Users, History, Settings as SettingsIcon, Save, Trash2,
-  Download, AlertTriangle, BookOpen, FileText, Plus, X, Check, RefreshCw
+  Download, AlertTriangle, BookOpen, FileText, Plus, X, Check, RefreshCw, Shield
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
@@ -52,6 +52,8 @@ const Impostazioni: React.FC = () => {
   const [newUserPwd,   setNewUserPwd]   = useState('');
   const [newUserRole,  setNewUserRole]  = useState<any>('Contract Holder Collaborator (PSER)');
   const importRef = useRef<HTMLInputElement>(null);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmInput, setResetConfirmInput] = useState('');
 
   const currentSection = SECTIONS.find(s => s.id === activeSection);
   const initials = user?.nome?.split(' ').map(n => n[0]).slice(0,2).join('').toUpperCase() || '??';
@@ -565,6 +567,105 @@ const Impostazioni: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {user?.role === 'Amministratore' && (
+                  <div className="bg-[#0f2035] border border-white/10 rounded-xl overflow-hidden">
+                    {/* Header */}
+                    <div className="flex items-center gap-3 px-5 py-4 border-b border-white/8">
+                      <div className="w-8 h-8 bg-[#534AB7]/20 border border-[#534AB7]/30 rounded-lg flex items-center justify-center">
+                        <Shield size={14} className="text-[#a89ef8]" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-bold text-[#ddeeff]">Amministrazione</div>
+                        <div className="text-[10px] text-[#3a5a7a]">Operazioni riservate agli Amministratori — agiscono direttamente sul sistema</div>
+                      </div>
+                    </div>
+
+                    {/* Backup Completo */}
+                    <div className="flex items-center justify-between gap-6 px-5 py-4 border-b border-white/5">
+                      <div>
+                        <div className="text-sm font-medium text-[#ddeeff]">Backup Completo</div>
+                        <div className="text-[11px] text-[#3a5a7a]">
+                          Scarica tutti i dati in un file JSON firmato. Nome file:{' '}
+                          <span className="font-mono text-[#378ADD]">backup_pser_{format(new Date(), 'yyyyMMdd')}.json</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleExportBackup}
+                        className="shrink-0 h-10 px-5 bg-[#1D9E75]/15 border border-[#1D9E75]/40 rounded-xl text-[#5DCAA5] text-xs font-bold hover:bg-[#1D9E75]/25 transition-all flex items-center gap-2"
+                      >
+                        <Download size={14} /> Scarica Backup Completo
+                      </button>
+                    </div>
+
+                    {/* Ripristino da Backup */}
+                    <div className="flex items-center justify-between gap-6 px-5 py-4 border-b border-white/5">
+                      <div>
+                        <div className="text-sm font-medium text-[#ddeeff]">Ripristino da Backup</div>
+                        <div className="text-[11px] text-[#3a5a7a]">Carica un file JSON di backup e ripristina i dati (upsert su tutte le tabelle).</div>
+                      </div>
+                      <button
+                        onClick={() => importRef.current?.click()}
+                        className="shrink-0 h-10 px-5 bg-[#534AB7]/15 border border-[#534AB7]/40 rounded-xl text-[#a89ef8] text-xs font-bold hover:bg-[#534AB7]/25 transition-all flex items-center gap-2"
+                      >
+                        <Upload size={14} /> Importa Backup
+                      </button>
+                    </div>
+
+                    {/* Reset Completo */}
+                    <div className="flex items-center justify-between gap-6 px-5 py-4">
+                      <div>
+                        <div className="text-sm font-medium text-[#f09595]">Reset Completo Sistema</div>
+                        <div className="text-[11px] text-[#3a5a7a]">
+                          Elimina <span className="font-bold text-[#f09595]">definitivamente</span> tutti i dati. Operazione irreversibile — richiede conferma testuale.
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setShowResetModal(true)}
+                        className="shrink-0 h-10 px-5 bg-[#E24B4A] text-white rounded-xl text-xs font-bold hover:bg-[#c0392b] transition-all flex items-center gap-2 shadow-lg shadow-[#E24B4A]/20"
+                      >
+                        <RefreshCw size={14} /> Reset Completo Sistema
+                      </button>
+                    </div>
+
+                    {/* Conferma testuale reset */}
+                    {showResetModal && (
+                      <div className="px-5 pb-5 border-t border-[#E24B4A]/20 bg-[#E24B4A]/5">
+                        <div className="text-xs text-[#f09595] mt-3 mb-2">
+                          Digita <span className="font-mono font-bold bg-[#E24B4A]/20 px-1.5 py-0.5 rounded">RESET</span> per confermare l'operazione:
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={resetConfirmInput}
+                            onChange={e => setResetConfirmInput(e.target.value)}
+                            placeholder="RESET"
+                            className="flex-1 h-9 bg-[#0b1a2e] border border-[#E24B4A]/40 rounded-lg text-[#f09595] text-xs px-3 outline-none font-mono tracking-widest"
+                          />
+                          <button
+                            onClick={() => {
+                              if (resetConfirmInput !== 'RESET') return;
+                              ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem('pser_' + k));
+                              setShowResetModal(false);
+                              setResetConfirmInput('');
+                              window.location.reload();
+                            }}
+                            disabled={resetConfirmInput !== 'RESET'}
+                            className="h-9 px-4 bg-[#E24B4A] text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                          >
+                            Conferma
+                          </button>
+                          <button
+                            onClick={() => { setShowResetModal(false); setResetConfirmInput(''); }}
+                            className="h-9 px-3 bg-white/5 border border-white/10 rounded-lg text-[#8ab0c8] text-xs hover:bg-white/10 transition-all"
+                          >
+                            Annulla
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

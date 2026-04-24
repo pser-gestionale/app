@@ -736,55 +736,67 @@ const ImportaExcel: React.FC = () => {
       {/* STEP: SUCCESS */}
       {step === 'success' && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-5">
-          <div className="bg-[#0f2035] border border-white/10 rounded-xl p-10 text-center space-y-3">
-            <div className="w-16 h-16 bg-[#1D9E75]/20 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(29,158,117,0.2)]">
-              <Check size={32} className="text-[#1D9E75]" />
-            </div>
-            <h2 className="text-xl font-bold text-[#ddeeff]">Importazione completata!</h2>
-            <p className="text-xs text-[#3a5a7a]">Il database è stato aggiornato correttamente.</p>
-            <div className="grid grid-cols-4 gap-3 mt-4">
-              {[
-                { label: 'Nuovi',       val: summaryStats.nuovi,       color: '#5DCAA5' },
-                { label: 'Aggiornati',  val: summaryStats.aggiornati,  color: '#F5A800' },
-                { label: 'Mantenuti',   val: summaryStats.mantenuti,   color: '#a89ef8' },
-                { label: 'Saltati',     val: summaryStats.saltati,     color: '#4a6a8a' },
-              ].map(s => (
-                <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4">
-                  <div className="text-2xl font-bold font-mono" style={{ color: s.color }}>{s.val}</div>
-                  <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-1">{s.label}</div>
-                </div>
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto">
-              {[
-                { label: 'Appaltatori Aggiunti', val: summaryStats.appaltatori, color: '#378ADD' },
-                { label: 'Documenti Creati',     val: summaryStats.documenti,   color: '#378ADD' },
-              ].map(s => (
-                <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4">
-                  <div className="text-2xl font-bold font-mono" style={{ color: s.color }}>{s.val}</div>
-                  <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-1">{s.label}</div>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Log importazione */}
+          {/* Card unica: checkmark + KPI + log */}
           <div className="bg-[#0f2035] border border-white/10 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-white/5">
-              <span className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest">Log Importazione</span>
+
+            {/* Sezione superiore: checkmark + title + KPI */}
+            <div className="p-10 text-center space-y-6">
+              <div className="w-16 h-16 bg-[#1D9E75]/20 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(29,158,117,0.2)]">
+                <Check size={32} className="text-[#1D9E75]" />
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-[#ddeeff]">Importazione completata!</h2>
+                <p className="text-xs text-[#3a5a7a] mt-1">Il database è stato aggiornato correttamente.</p>
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { label: 'Nuovi',      val: summaryStats.nuovi,      color: '#5DCAA5' },
+                  { label: 'Aggiornati', val: summaryStats.aggiornati, color: '#F5A800' },
+                  { label: 'Mantenuti',  val: summaryStats.mantenuti,  color: '#a89ef8' },
+                  { label: 'Saltati',    val: summaryStats.saltati,    color: '#4a6a8a' },
+                ].map(s => (
+                  <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4">
+                    <div className="text-3xl font-bold font-mono" style={{ color: s.color }}>{s.val}</div>
+                    <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-1">{s.label}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-3 max-w-xs mx-auto">
+                {[
+                  { label: 'Appaltatori Aggiunti', val: summaryStats.appaltatori, icon: <Upload size={16} /> },
+                  { label: 'Documenti Creati',     val: summaryStats.documenti,   icon: <FileText size={16} /> },
+                ].map(s => (
+                  <div key={s.label} className="bg-white/3 border border-white/8 rounded-xl p-4 flex items-center gap-3">
+                    <div className="text-[#378ADD]">{s.icon}</div>
+                    <div>
+                      <div className="text-2xl font-bold font-mono text-[#378ADD]">{s.val}</div>
+                      <div className="text-[9px] text-[#3a5a7a] uppercase font-bold tracking-wider mt-0.5">{s.label}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="max-h-48 overflow-y-auto custom-scrollbar p-4 space-y-1">
-              {importLog.slice(0, 50).map((l, i) => (
-                <div key={i} className="text-[11px] text-[#4a6a8a] font-mono">{l}</div>
-              ))}
+
+            {/* Log importazione — dentro la stessa card, sfondo più scuro */}
+            <div className="border-t border-white/5">
+              <div className="px-5 py-3 bg-white/2">
+                <span className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest">Log Importazione</span>
+              </div>
+              <div className="max-h-44 overflow-y-auto custom-scrollbar px-5 py-3 space-y-1 bg-[#0a1628]">
+                {importLog.slice(0, 50).map((l, i) => (
+                  <div key={i} className="text-[11px] text-[#4a6a8a] font-mono">{l}</div>
+                ))}
+              </div>
             </div>
           </div>
 
-          <div className="flex gap-3">
-            <button onClick={() => { window.location.href = '/subaffidamenti'; }} className="h-11 px-6 bg-[#534AB7] text-[#e8e6f8] rounded-xl text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:bg-[#6358cc] transition-all flex items-center gap-2">
+          {/* Bottoni fuori dalla card */}
+          <div className="flex gap-3 justify-center pb-2">
+            <button onClick={() => { window.location.href = '/subaffidamenti'; }} className="h-11 px-6 bg-white/5 border border-white/10 rounded-xl text-[#a89ef8] text-sm font-bold hover:bg-[#534AB7]/15 transition-all flex items-center gap-2">
               <ArrowRight size={15} /> Vai a Subaffidamenti
             </button>
-            <button onClick={() => { window.location.href = '/'; }} className="h-11 px-6 bg-[#1D9E75]/15 border border-[#1D9E75]/35 rounded-xl text-[#5DCAA5] text-sm font-bold hover:bg-[#1D9E75]/25 transition-all flex items-center gap-2">
+            <button onClick={() => { window.location.href = '/'; }} className="h-11 px-6 bg-[#1D9E75] text-white rounded-xl text-sm font-bold hover:bg-[#17845e] transition-all flex items-center gap-2 shadow-lg shadow-[#1D9E75]/20">
               <Check size={15} /> Vai alla Dashboard
             </button>
             <button onClick={() => { setStep('upload'); setParsedRows([]); setProgress(0); setImportLog([]); }} className="h-11 px-5 bg-white/5 border border-white/10 rounded-xl text-[#6a8aaa] text-sm font-bold hover:bg-white/10 transition-all flex items-center gap-2">

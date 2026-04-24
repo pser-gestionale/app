@@ -165,6 +165,7 @@ const Impostazioni: React.FC = () => {
   const labelCls = "text-[11px] text-[#3a5a7a] font-bold uppercase tracking-wider";
 
   return (
+    <>
     <div className="flex min-h-screen">
       {/* NAV */}
       <div className="w-[220px] min-w-[220px] py-6 border-r border-white/5 bg-white/[0.01]">
@@ -628,42 +629,6 @@ const Impostazioni: React.FC = () => {
                       </button>
                     </div>
 
-                    {/* Conferma testuale reset */}
-                    {showResetModal && (
-                      <div className="px-5 pb-5 border-t border-[#E24B4A]/20 bg-[#E24B4A]/5">
-                        <div className="text-xs text-[#f09595] mt-3 mb-2">
-                          Digita <span className="font-mono font-bold bg-[#E24B4A]/20 px-1.5 py-0.5 rounded">RESET</span> per confermare l'operazione:
-                        </div>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={resetConfirmInput}
-                            onChange={e => setResetConfirmInput(e.target.value)}
-                            placeholder="RESET"
-                            className="flex-1 h-9 bg-[#0b1a2e] border border-[#E24B4A]/40 rounded-lg text-[#f09595] text-xs px-3 outline-none font-mono tracking-widest"
-                          />
-                          <button
-                            onClick={() => {
-                              if (resetConfirmInput !== 'RESET') return;
-                              ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem('pser_' + k));
-                              setShowResetModal(false);
-                              setResetConfirmInput('');
-                              window.location.reload();
-                            }}
-                            disabled={resetConfirmInput !== 'RESET'}
-                            className="h-9 px-4 bg-[#E24B4A] text-white rounded-lg text-xs font-bold disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-                          >
-                            Conferma
-                          </button>
-                          <button
-                            onClick={() => { setShowResetModal(false); setResetConfirmInput(''); }}
-                            className="h-9 px-3 bg-white/5 border border-white/10 rounded-lg text-[#8ab0c8] text-xs hover:bg-white/10 transition-all"
-                          >
-                            Annulla
-                          </button>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -673,6 +638,81 @@ const Impostazioni: React.FC = () => {
         </AnimatePresence>
       </div>
     </div>
+
+    {/* RESET MODAL OVERLAY */}
+    {showResetModal && (
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[900] flex items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          className="bg-[#0f2035] border border-[#E24B4A]/40 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden"
+        >
+          {/* Header */}
+          <div className="flex items-center gap-4 px-6 py-5 border-b border-[#E24B4A]/20">
+            <div className="w-12 h-12 bg-[#E24B4A]/20 border border-[#E24B4A]/40 rounded-xl flex items-center justify-center shrink-0">
+              <Shield size={22} className="text-[#f09595]" />
+            </div>
+            <div>
+              <div className="text-base font-bold text-[#f09595]">Reset Completo Sistema</div>
+              <div className="text-xs text-[#3a5a7a] mt-0.5">Operazione irreversibile sul sistema</div>
+            </div>
+          </div>
+
+          {/* Warning box */}
+          <div className="mx-6 mt-5 bg-[#E24B4A]/10 border border-[#E24B4A]/30 rounded-xl p-4">
+            <div className="flex items-center gap-2 text-sm font-bold text-[#f09595] mb-3">
+              <AlertTriangle size={15} /> Questa operazione eliminerà definitivamente:
+            </div>
+            <ul className="space-y-1.5">
+              {['Tutti i subaffidamenti','Tutti gli appaltatori','Tutti i documenti di controllo','Tutto il log attività','Tutti gli eventi calendario'].map(item => (
+                <li key={item} className="flex items-center gap-2 text-sm text-[#c8ddf0]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#E24B4A] shrink-0" /> {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Confirm input */}
+          <div className="px-6 mt-5">
+            <div className="text-[10px] font-bold text-[#3a5a7a] tracking-widest uppercase mb-2">
+              Digita <span className="text-[#f09595] font-mono">RESET CONFERMATO</span> per procedere
+            </div>
+            <input
+              type="text"
+              value={resetConfirmInput}
+              onChange={e => setResetConfirmInput(e.target.value)}
+              placeholder="RESET CONFERMATO"
+              className="w-full h-12 bg-[#0b1a2e] border border-[#E24B4A]/30 rounded-xl text-[#f09595] text-sm px-4 outline-none font-mono tracking-widest focus:border-[#E24B4A]/60 transition-all placeholder:text-[#2a3a4a]"
+            />
+          </div>
+
+          {/* Buttons */}
+          <div className="flex gap-3 px-6 py-5 mt-1">
+            <button
+              onClick={() => { setShowResetModal(false); setResetConfirmInput(''); }}
+              className="flex-1 h-12 bg-white/5 border border-white/10 rounded-xl text-[#8ab0c8] text-sm font-bold hover:bg-white/10 transition-all"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={() => {
+                if (resetConfirmInput !== 'RESET CONFERMATO') return;
+                ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem('pser_' + k));
+                setShowResetModal(false);
+                setResetConfirmInput('');
+                window.location.reload();
+              }}
+              disabled={resetConfirmInput !== 'RESET CONFERMATO'}
+              className="flex-1 h-12 bg-[#E24B4A] text-white rounded-xl text-sm font-bold hover:bg-[#c0392b] transition-all flex items-center justify-center gap-2 disabled:opacity-30 disabled:cursor-not-allowed shadow-lg shadow-[#E24B4A]/20"
+            >
+              <RefreshCw size={15} /> Esegui Reset
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    )}
+    </>
   );
 };
 

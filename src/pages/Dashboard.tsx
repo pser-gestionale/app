@@ -29,6 +29,7 @@ import {
   ChevronLeft,
   Plus,
   Bell,
+  Sun,
   Trash2,
   Edit2,
   Euro,
@@ -361,6 +362,7 @@ const Dashboard: React.FC = () => {
     subaffidamenti.forEach(d => {
       if (!d.inserito) return;
       const date = new Date(d.inserito);
+      if (isNaN(date.getTime())) return;
       const key = format(date, 'MMM yy', { locale: it });
       if (!monthly[key]) monthly[key] = { name: key, sub: 0, budget: 0 };
       monthly[key].sub += parseFloat(d.importoEur || '0');
@@ -1081,18 +1083,17 @@ const Dashboard: React.FC = () => {
           <p className="text-xs text-[#3a5a7a] mt-1">Panoramica generale — aggiornata in tempo reale</p>
         </div>
         <div className="flex items-center gap-2.5">
-          {/* QUICK IMPORT */}
-          <button 
-            onClick={() => navigate('/importa-excel')}
-            className="h-10 px-4 bg-[#534AB7]/10 border border-[#534AB7]/30 rounded-xl flex items-center gap-2 text-[#a89ef8] text-xs font-bold hover:bg-[#534AB7]/20 transition-all"
+          {/* MAIL */}
+          <button
+            onClick={() => setShowEmailModal(true)}
+            className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 hover:text-[#378ADD] transition-all"
           >
-            <FileUp size={16} />
-            <span className="hidden sm:inline">Importa Excel</span>
+            <Mail size={18} />
           </button>
 
           {/* NOTIFICATIONS */}
           <div className="relative">
-            <button 
+            <button
               onClick={() => setShowNotifications(!showNotifications)}
               className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 hover:text-[#378ADD] transition-all relative"
             >
@@ -1157,14 +1158,22 @@ const Dashboard: React.FC = () => {
             </AnimatePresence>
           </div>
 
-          <div className="text-[11px] text-[#4a6a8a] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
-            {format(today, 'EEEE d MMMM yyyy', { locale: it })}
+          {/* SUN / THEME TOGGLE */}
+          <button className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center text-[#8ab0c8] hover:bg-white/10 hover:text-[#f5c842] transition-all">
+            <Sun size={18} />
+          </button>
+
+          {/* DATE CHIP */}
+          <div className="h-10 flex items-center px-3 bg-white/5 border border-white/10 rounded-xl text-[11px] text-[#8ab0c8] font-medium whitespace-nowrap capitalize">
+            {format(today, 'EEEE d MMM yyyy', { locale: it })}
           </div>
+
+          {/* USER AVATAR */}
           <div className="flex items-center gap-2 text-[11px] text-[#4a6a8a] bg-white/5 border border-white/10 rounded-lg px-3 py-1.5">
-            <div className="w-6.5 h-6.5 rounded-full bg-[#1e3550] flex items-center justify-center text-[10px] text-[#8ab0c8] font-semibold">
-              {user?.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()}
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#534AB7] to-[#378ADD] flex items-center justify-center text-[10px] text-white font-bold shadow-[0_0_10px_rgba(83,74,183,0.4)]">
+              {user?.nome?.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()}
             </div>
-            {user?.nome}
+            <span className="text-[#c8ddf0] font-medium">{user?.nome}</span>
           </div>
         </div>
       </div>
@@ -1236,8 +1245,8 @@ const Dashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* ADVANCED ANALYSIS & COMPLIANCE SECTION */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ADVANCED ANALYSIS & COMPLIANCE SECTION - hidden, content moved to ROW A and ROW B */}
+      <div className="hidden grid-cols-1 lg:grid-cols-3 gap-6">
         {/* PREDICTIVE ALERTS */}
         <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 space-y-3 shadow-xl">
           <div className="flex items-center justify-between">
@@ -1376,9 +1385,9 @@ const Dashboard: React.FC = () => {
 
       {/* FILTERS & ACTIONS */}
       <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
-        <div className="flex items-end justify-between gap-4 flex-wrap">
-          <div className="flex items-end gap-4 flex-1">
-            <div className="flex flex-col gap-2 relative flex-1 max-w-md">
+        <div className="flex items-end justify-between gap-3 flex-nowrap">
+          <div className="flex items-end gap-3 flex-1">
+            <div className="flex flex-col gap-1 relative flex-1 max-w-[220px]">
               <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Appaltatore</label>
               <div className="relative group">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#3a5a7a] group-focus-within:text-[#534AB7] transition-colors" />
@@ -1429,7 +1438,7 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-col gap-2 min-w-[180px] relative">
+            <div className="flex flex-col gap-1 min-w-[160px] relative">
               <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Contratto</label>
               <div className="relative group">
                 <FileText size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#3a5a7a] group-focus-within:text-[#534AB7] transition-colors" />
@@ -1477,7 +1486,7 @@ const Dashboard: React.FC = () => {
               </AnimatePresence>
             </div>
 
-            <div className="flex flex-col gap-2 min-w-[160px]">
+            <div className="flex flex-col gap-1 min-w-[140px]">
               <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Tipo</label>
               <select 
                 value={tipoFilter}
@@ -1490,7 +1499,7 @@ const Dashboard: React.FC = () => {
               </select>
             </div>
 
-            <div className="flex flex-col gap-2 min-w-[180px]">
+            <div className="flex flex-col gap-1 min-w-[155px]">
               <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Stato</label>
               <select 
                 value={statoFilter}
@@ -1503,7 +1512,7 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="flex gap-2">
-              <button 
+              <button
                 onClick={() => setShowGantt(!showGantt)}
                 className={cn(
                   "h-10 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border",
@@ -1529,11 +1538,11 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          <button 
+          <button
             onClick={() => setShowArchivioModal(true)}
-            className="h-12 px-6 bg-[#1D9E75]/10 border border-[#1D9E75]/30 rounded-xl text-[#5DCAA5] text-xs font-bold hover:bg-[#1D9E75]/20 hover:shadow-[0_0_20px_rgba(29,158,117,0.2)] transition-all flex items-center gap-2.5"
+            className="h-10 px-4 bg-[#1D9E75]/10 border border-[#1D9E75]/30 rounded-xl text-[#5DCAA5] text-xs font-bold hover:bg-[#1D9E75]/20 transition-all flex items-center gap-2 shrink-0"
           >
-            <Archive size={16} /> Vai all'Archivio
+            <Archive size={14} /> Vai all'Archivio
           </button>
         </div>
       </div>
@@ -1771,46 +1780,82 @@ const Dashboard: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* ROW 2: CHARTS */}
-      <div className="grid grid-cols-[1.4fr_1fr] gap-4">
+      {/* SEZIONI ROW A + ROW B - ordinate visivamente con flex */}
+      <div className="flex flex-col gap-5">
+
+      {/* ROW B: ULTIMI INSERITI | TREND | DISTRIBUZIONE */}
+      <div className="grid grid-cols-3 gap-4 order-2">
         <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4">
           <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-semibold text-[#7a9ab8]">
-              {selectedApp ? `Subfornitori di ${selectedApp}` : 'Appaltatori Virtuosi (Top 4)'}
+            <h3 className="text-xs font-semibold text-[#7a9ab8] flex items-center gap-2">
+              <Clock size={14} /> Ultimi Inseriti
             </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[#2a4a6a] bg-white/5 rounded px-2 py-0.5">{selectedApp ? 'Per subfornitore' : 'Top 4'}</span>
-              <button 
-                onClick={() => setShowAllBarChart(true)}
-                className="text-[10px] px-2.5 py-1.5 rounded-lg border border-[#8374B7]/30 text-[#a89ef8] bg-[#8374B7]/10 hover:bg-[#8374B7]/20 transition-all flex items-center gap-1.5"
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#378ADD] text-white">RECENTI</span>
+              <button
+                onClick={() => navigate('/subaffidamenti')}
+                className="text-[10px] px-2.5 py-1 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all"
               >
-                <ExternalLink size={10} /> Vedi tutti
+                Vedi ATT
+              </button>
+              <button
+                onClick={() => navigate('/storico')}
+                className="text-[10px] px-2.5 py-1 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all"
+              >
+                Vedi STO
               </button>
             </div>
           </div>
-          <div className="space-y-3">
-            {barChartData.display.length > 0 ? barChartData.display.map(([label, val], i) => (
-              <div key={label} className="flex items-center gap-3 group cursor-pointer" onClick={() => {
-                if (!selectedApp) {
-                  setSelectedApp(label);
-                  setAppSearch(label);
-                }
-              }}>
-                <div className="text-[11px] text-[#5a7a9a] w-28 truncate group-hover:text-[#ddeeff] transition-colors" title={label}>{label}</div>
-                <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${(val / barChartData.display[0][1]) * 100}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut", delay: i * 0.1 }}
-                    className="h-full rounded-full"
-                    style={{ backgroundColor: BAR_COLORS[i % 5] }}
-                  />
+          <div className="space-y-1">
+            {recenti.length > 0 ? recenti.map((d, i) => (
+              <div key={i} className="flex items-center gap-3 py-2.5 border-b border-white/5 last:border-0 last:pb-0 group cursor-pointer" onClick={() => handleRowClick(d)}>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-[#8ab0c8] font-medium truncate group-hover:text-[#ddeeff] transition-colors">{d.appaltatore || d.app}</div>
+                  <div className="text-[10px] text-[#2a4a6a] mt-0.5 truncate">{d.subfornitore || d.sub} • {d.tipo}</div>
                 </div>
-                <div className="text-[11px] text-[#7a9ab8] w-6 text-right font-mono">{val}</div>
+                <span className={cn("pill shrink-0", STATO_CLS[d.stato] || "bg-white/5 text-[#5a7a9a]")}>
+                  {d.stato.replace('Richiesta Informazioni', 'Rich. Info')}
+                </span>
               </div>
             )) : (
               <div className="text-center py-10 text-xs text-[#2a4a6a]">Nessun dato</div>
             )}
+          </div>
+        </div>
+
+        <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-widest flex items-center gap-2">
+              <Activity size={14} className="text-[#378ADD]" /> Trend Cumulativo Subappalti
+            </h3>
+            <div className="flex gap-2">
+              <div className="flex items-center gap-1 text-[8px] text-[#3a5a7a] uppercase font-bold">
+                <div className="w-2 h-2 rounded-full bg-[#378ADD]" /> Sub
+              </div>
+              <div className="flex items-center gap-1 text-[8px] text-[#3a5a7a] uppercase font-bold">
+                <div className="w-2 h-2 rounded-full bg-[#534AB7]" /> Budget
+              </div>
+            </div>
+          </div>
+          <div className="h-[220px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={cumulativeData}>
+                <defs>
+                  <linearGradient id="colorSub2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#378ADD" stopOpacity={0.3}/>
+                    <stop offset="95%" stopColor="#378ADD" stopOpacity={0}/>
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#3a5a7a', fontSize: 9}} dy={10} />
+                <RechartsTooltip
+                  contentStyle={{ backgroundColor: '#0f2035', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '10px' }}
+                  itemStyle={{ color: '#ddeeff' }}
+                />
+                <Area type="monotone" dataKey="sub" stroke="#378ADD" fillOpacity={1} fill="url(#colorSub2)" strokeWidth={2} />
+                <Area type="monotone" dataKey="budget" stroke="#534AB7" fill="transparent" strokeWidth={1} strokeDasharray="5 5" />
+              </AreaChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
@@ -1961,8 +2006,8 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* ROW 3: ALERTS & RECENTI */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* ROW A: SCADENZE & SOGLIE CONTRATTI */}
+      <div className="grid grid-cols-2 gap-4 order-1">
         <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2.5">
@@ -2030,38 +2075,45 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-semibold text-[#7a9ab8] flex items-center gap-2">
-              <Clock size={14} /> Ultimi Inseriti
+        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2.5">
+              <Zap size={18} className="text-[#F5A800]" /> Soglie Contratti
             </h3>
             <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[#3a5a7a] bg-white/5 rounded px-2 py-0.5">Recenti</span>
-              <button 
-                onClick={() => setShowUltimiModal(true)}
-                className="text-[10px] px-2.5 py-1.5 rounded-lg border border-[#378ADD]/30 text-[#85B7EB] bg-[#378ADD]/10 hover:bg-[#378ADD]/20 transition-all"
+              <span className="text-[10px] text-[#F5A800] bg-[#F5A800]/10 px-2.5 py-1 rounded-full font-bold">{predictiveAlerts.length} to alerta</span>
+              <button
+                onClick={() => handleExportPDF('Report Soglie Contratti', predictiveAlerts)}
+                className="text-[10px] px-3 py-1.5 rounded-lg border border-[#F5A800]/30 text-[#F5A800] bg-[#F5A800]/10 hover:bg-[#F5A800]/20 transition-all flex items-center gap-1.5"
               >
-                ↗ Vedi tutti
+                <Download size={12} /> PDF
               </button>
             </div>
           </div>
-          <div className="space-y-1">
-            {recenti.length > 0 ? recenti.map((d, i) => (
-              <div key={i} className="flex items-center gap-3 py-2.5 border-b border-white/5 last:border-0 last:pb-0 group cursor-pointer" onClick={() => handleRowClick(d)}>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-[#8ab0c8] font-medium truncate group-hover:text-[#ddeeff] transition-colors">{d.appaltatore || d.app}</div>
-                  <div className="text-[10px] text-[#2a4a6a] mt-0.5 truncate">{d.subfornitore || d.sub} • {d.tipo}</div>
+          <div className="space-y-3 max-h-[220px] overflow-y-auto custom-scrollbar pr-2">
+            {predictiveAlerts.length > 0 ? predictiveAlerts.map(a => (
+              <div key={a.id} className="bg-white/3 border border-white/5 rounded-xl p-3 flex items-center justify-between group hover:bg-[#534AB7]/10 transition-all cursor-pointer" onClick={() => handleRowClick(a)}>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-bold text-[#ddeeff] group-hover:text-[#a89ef8]">{a.app}</div>
+                  <div className="text-[9px] text-[#3a5a7a] font-mono">{a.idSap || a.id}</div>
                 </div>
-                <span className={cn("pill shrink-0", STATO_CLS[d.stato] || "bg-white/5 text-[#5a7a9a]")}>
-                  {d.stato.replace('Richiesta Informazioni', 'Rich. Info')}
-                </span>
+                <div className="text-right space-y-1">
+                  <div className={cn("text-xs font-bold", a.pct >= 80 ? "text-[#E24B4A]" : "text-[#F5A800]")}>
+                    {Math.round(a.pct)}%
+                  </div>
+                  <div className="w-16 h-1 bg-white/10 rounded-full overflow-hidden">
+                    <div className={cn("h-full", a.pct >= 80 ? "bg-[#E24B4A]" : "bg-[#F5A800]")} style={{ width: `${a.pct}%` }} />
+                  </div>
+                </div>
               </div>
             )) : (
-              <div className="text-center py-10 text-xs text-[#2a4a6a]">Nessun dato</div>
+              <div className="text-center py-10 text-xs text-[#3a5a7a] italic">Nessuna soglia superata</div>
             )}
           </div>
         </div>
       </div>
+
+      </div>{/* end flex wrapper ROW A + ROW B */}
 
       {/* DETAIL PANEL (Removed from here) */}
 
@@ -2340,7 +2392,7 @@ const Dashboard: React.FC = () => {
               exit={{ opacity: 0, scale: 0.95 }}
               className={cn(
                 "bg-[#0f2035] border border-white/10 rounded-2xl w-full max-h-[85vh] flex flex-col shadow-2xl overflow-hidden transition-all duration-300",
-                showCalendarModal ? "max-w-sm" : "max-w-4xl"
+                showCalendarModal || showEmailModal ? "max-w-sm" : "max-w-4xl"
               )}
             >
               <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/2">
@@ -2350,7 +2402,7 @@ const Dashboard: React.FC = () => {
                   {showCriticiModal && <><AlertTriangle size={16} className="text-[#E24B4A]" /> Tutte le Criticità</>}
                   {showArchivioModal && <><Archive size={16} /> Archivio Completo</>}
                   {showCalendarModal && <><span className="text-lg">📅</span> Calendario Scadenze</>}
-                  {showEmailModal && <><Mail size={16} /> Email Alert — {selectedApp || 'Appaltatore'}</>}
+                  {showEmailModal && <><Mail size={16} /> INVIA EMAIL</>}
                   {showAllBarChart && <><BarChart3 size={16} /> {selectedApp ? `Tutti i Subfornitori di ${selectedApp}` : 'Tutti gli Appaltatori Virtuosi'}</>}
                 </h2>
                 <button 
@@ -2424,23 +2476,47 @@ const Dashboard: React.FC = () => {
                 )}
 
                 {showEmailModal ? (
-                  <div className="space-y-4">
-                    <div className="text-[11px] text-[#3a5a7a]">Messaggio precompilato pronto per l'invio. Copia e incolla nel tuo client email.</div>
-                    <div className="bg-[#0b1a2e] border border-white/5 rounded-xl p-5 text-xs text-[#a0b8d0] leading-relaxed whitespace-pre-wrap font-mono">
-                      {`Oggetto: Sollecito documentazione e scadenze — PSER\n\nEgregio ${selectedApp || 'Appaltatore'},\n\ncomunichiamo quanto segue in riferimento alle pratiche di subaffidamento in corso:\n\n📅 SCADENZE IMMINENTI:\n${alerts.slice(0, 5).map(d => `  • ${d.sub} (ID: ${d.id}) — Scade tra ${safeDiff((d as any).scadenza || (d as any).scad, today)} giorni`).join('\n')}\n\nSi richiede cortesemente di procedere con urgenza all'aggiornamento della documentazione richiesta.\n\nCordiali saluti,\n${user?.nome}\nPSER — Gestione Subaffidamenti`}
-                    </div>
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={() => {
-                          const text = `Oggetto: Sollecito documentazione e scadenze — PSER\n\nEgregio ${selectedApp || 'Appaltatore'},\n\ncomunichiamo quanto segue in riferimento alle pratiche di subaffidamento in corso:\n\n📅 SCADENZE IMMINENTI:\n${alerts.slice(0, 5).map(d => `  • ${d.sub} (ID: ${d.id}) — Scade tra ${safeDiff((d as any).scadenza || (d as any).scad, today)} giorni`).join('\n')}\n\nSi richiede cortesemente di procedere con urgenza all'aggiornamento della documentazione richiesta.\n\nCordiali saluti,\n${user?.nome}\nPSER — Gestione Subaffidamenti`;
-                          navigator.clipboard.writeText(text);
-                          alert('Testo copiato!');
-                        }}
-                        className="h-10 px-6 bg-[#534AB7] text-white rounded-lg text-xs font-bold hover:bg-[#6358cc] transition-all flex items-center gap-2"
-                      >
-                        <Send size={14} /> Copia Testo
-                      </button>
-                    </div>
+                  <div className="space-y-5">
+                    <p className="text-sm text-[#7a9ab8] leading-relaxed">
+                      Apre il tuo client email predefinito con oggetto e corpo precompilati per le pratiche in scadenza.
+                    </p>
+                    {(() => {
+                      const pratiche = alerts.slice(0, 10);
+                      const subject = encodeURIComponent('Sollecito documentazione e scadenze — PSER');
+                      const body = encodeURIComponent(
+                        `Egregio ${selectedApp || 'Appaltatore'},\n\ncomunichiamo quanto segue in riferimento alle pratiche di subaffidamento in corso:\n\nSCADENZE IMMINENTI:\n${pratiche.map(d => `  • ${(d as any).appaltatore || (d as any).app || ''} — ${(d as any).sub || (d as any).subfornitore || ''}`).join('\n')}\n\nSi richiede cortesemente di procedere con urgenza all'aggiornamento della documentazione richiesta.\n\nCordiali saluti,\n${user?.nome}\nPSER — Gestione Subaffidamenti`
+                      );
+                      return (
+                        <>
+                          <div className="space-y-3">
+                            <button
+                              onClick={() => window.open(`https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`, '_blank')}
+                              className="w-full h-12 flex items-center justify-center gap-3 bg-[#E24B4A]/15 border border-[#E24B4A]/40 rounded-xl text-[#f09595] text-sm font-bold hover:bg-[#E24B4A]/25 transition-all"
+                            >
+                              <Mail size={16} /> Apri con Gmail / Client Email
+                            </button>
+                            <button
+                              onClick={() => window.open(`https://outlook.office.com/mail/deeplink/compose?subject=${subject}&body=${body}`, '_blank')}
+                              className="w-full h-12 flex items-center justify-center gap-3 bg-[#378ADD]/15 border border-[#378ADD]/40 rounded-xl text-[#7ac0f0] text-sm font-bold hover:bg-[#378ADD]/25 transition-all"
+                            >
+                              <Mail size={16} /> Apri con Outlook
+                            </button>
+                          </div>
+                          <div>
+                            <div className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest mb-3">
+                              Pratiche incluse ({pratiche.length})
+                            </div>
+                            <div className="space-y-1.5">
+                              {pratiche.map((d, i) => (
+                                <div key={i} className="text-xs text-[#8ab0c8]">
+                                  • {(d as any).appaltatore || (d as any).app || '—'} — {(d as any).sub || (d as any).subfornitore || '—'}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : showCalendarModal ? (
                   <div className="space-y-4">

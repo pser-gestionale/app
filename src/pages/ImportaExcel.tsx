@@ -17,7 +17,10 @@ import {
   CheckCheck,
   ChevronDown,
   ChevronUp,
-  FileText
+  FileText,
+  Terminal,
+  Link,
+  LayoutGrid
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { format } from 'date-fns';
@@ -778,12 +781,13 @@ const ImportaExcel: React.FC = () => {
               </div>
             </div>
 
-            {/* Log importazione — dentro la stessa card, sfondo più scuro */}
+            {/* Log importazione */}
             <div className="border-t border-white/5">
-              <div className="px-5 py-3 bg-white/2">
+              <div className="px-5 py-3 bg-white/2 flex items-center gap-2">
+                <Terminal size={12} className="text-[#3a5a7a]" />
                 <span className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest">Log Importazione</span>
               </div>
-              <div className="max-h-44 overflow-y-auto custom-scrollbar px-5 py-3 space-y-1 bg-[#0a1628]">
+              <div className="max-h-36 overflow-y-auto custom-scrollbar px-5 py-4 space-y-2 bg-[#0a1628]">
                 {importLog.slice(0, 50).map((l, i) => (
                   <div key={i} className="text-[11px] text-[#4a6a8a] font-mono">{l}</div>
                 ))}
@@ -793,13 +797,13 @@ const ImportaExcel: React.FC = () => {
 
           {/* Bottoni fuori dalla card */}
           <div className="flex gap-3 justify-center pb-2">
-            <button onClick={() => { window.location.href = '/subaffidamenti'; }} className="h-11 px-6 bg-white/5 border border-white/10 rounded-xl text-[#a89ef8] text-sm font-bold hover:bg-[#534AB7]/15 transition-all flex items-center gap-2">
-              <ArrowRight size={15} /> Vai a Subaffidamenti
+            <button onClick={() => { window.location.href = '/subaffidamenti'; }} className="h-11 px-6 bg-[#534AB7] text-white rounded-xl text-sm font-bold hover:bg-[#6358cc] transition-all flex items-center gap-2 shadow-lg shadow-[#534AB7]/20">
+              <Link size={15} /> Vai a Subaffidamenti
             </button>
             <button onClick={() => { window.location.href = '/'; }} className="h-11 px-6 bg-[#1D9E75] text-white rounded-xl text-sm font-bold hover:bg-[#17845e] transition-all flex items-center gap-2 shadow-lg shadow-[#1D9E75]/20">
-              <Check size={15} /> Vai alla Dashboard
+              <LayoutGrid size={15} /> Vai alla Dashboard
             </button>
-            <button onClick={() => { setStep('upload'); setParsedRows([]); setProgress(0); setImportLog([]); }} className="h-11 px-5 bg-white/5 border border-white/10 rounded-xl text-[#6a8aaa] text-sm font-bold hover:bg-white/10 transition-all flex items-center gap-2">
+            <button onClick={() => { setStep('upload'); setParsedRows([]); setProgress(0); setImportLog([]); }} className="h-11 px-6 bg-white/5 border border-white/10 rounded-xl text-[#8ab0c8] text-sm font-bold hover:bg-white/10 transition-all flex items-center gap-2">
               <Upload size={15} /> Nuova Importazione
             </button>
           </div>

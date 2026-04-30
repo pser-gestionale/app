@@ -10,6 +10,7 @@ import {
   Settings,
   LogOut,
   BookUser,
+  BarChart2,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -29,6 +30,7 @@ const Sidebar: React.FC = () => {
     { to: '/rubrica', icon: BookUser, label: 'Rubrica Contatti' },
     { to: '/subaffidamenti', icon: LinkIcon, label: 'Subaffidamenti', section: 'Gestione' },
     { to: '/anagrafica', icon: Building2, label: 'Anagrafica' },
+    { to: '/analisi', icon: BarChart2, label: 'Analisi & Statistiche' },
     { to: '/report', icon: Download, label: 'Report & Export' },
     { to: '/importa', icon: Upload, label: 'Importa Excel', section: 'Sistema' },
     { to: '/impostazioni', icon: Settings, label: 'Impostazioni' },

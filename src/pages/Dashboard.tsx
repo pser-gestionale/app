@@ -161,14 +161,13 @@ const Dashboard: React.FC = () => {
   // Trend window + chart ref
   const [trendWindow, setTrendWindow] = useState<'3M' | '6M' | '1A' | 'ALL'>('1A');
   const trendChartRef1 = useRef<HTMLDivElement>(null);
-  const trendChartRef2 = useRef<HTMLDivElement>(null);
 
   // Worklist
-  const [worklistTab, setWorklistTab]           = useState<'Tutti' | 'Autorizzate' | 'Inviate' | 'Scadute' | 'Richiesta info' | 'Attivate' | 'Archivio'>('Tutti');
   const [worklistAppSearch, setWorklistAppSearch] = useState('');
   const [worklistIdSearch, setWorklistIdSearch]   = useState('');
   const [worklistTipo, setWorklistTipo]           = useState('');
   const [worklistStato, setWorklistStato]         = useState('');
+  const [worklistSpecialFilter, setWorklistSpecialFilter] = useState<'critici' | 'attivi' | 'lavorate' | null>(null);
   const [worklistDensity, setWorklistDensity]     = useState<'compact' | 'normal' | 'large'>('normal');
   const [worklistDots, setWorklistDots]           = useState<string | null>(null);
   const [quickEdit, setQuickEdit]                 = useState<{ id: string; stato: string } | null>(null);
@@ -180,14 +179,11 @@ const Dashboard: React.FC = () => {
     const sub = subaffidamenti.filter(d => d.tipo === 'Subappalto').length;
     const con = subaffidamenti.filter(d => d.tipo === 'Subcontratto').length;
     const crit = subaffidamenti.filter(d => {
-      const isRigettata = d.stato === 'Rigettata';
       const isScaduta = d.stato === 'Scaduta';
       const isNearScadenza = d.scadenza && isValidDate(d.scadenza) && safeDiff(d.scadenza, today) <= criticiRange;
-      return isRigettata || isScaduta || isNearScadenza;
+      return isScaduta || isNearScadenza;
     }).length;
     const ok = subaffidamenti.filter(d => d.stato === 'Autorizzata' || d.stato === 'Attivata').length;
-    
-    // Pratiche Lavorate (Processed Practices) - e.g., anything not in 'Inviata' state
     const lavorate = subaffidamenti.filter(d => d.stato !== 'Inviata').length;
     const lavoratePct = tot ? Math.round((lavorate / tot) * 100) : 0;
 
@@ -538,7 +534,7 @@ const Dashboard: React.FC = () => {
     return cumulative.slice(-months);
   }, [subaffidamenti, trendWindow]);
 
-  const ARCHIVIO_STATI = ['Rigettata', 'Scaduta', 'Chiusa', 'Annullata'];
+  const ARCHIVIO_STATI = ['Rigettata', 'Chiusa', 'Annullata'];
 
   // Aggregazione soglia per appaltatore: somma importi richiesti vs massimo subappaltabile
   const appaltatoreAgg = useMemo(() => {
@@ -557,37 +553,23 @@ const Dashboard: React.FC = () => {
     return map;
   }, [subaffidamenti]);
 
-  const worklistCounts = useMemo(() => ({
-    Tutti:           subaffidamenti.filter(d => !ARCHIVIO_STATI.includes(d.stato)).length,
-    Autorizzate:     subaffidamenti.filter(d => d.stato === 'Autorizzata').length,
-    Inviate:         subaffidamenti.filter(d => d.stato === 'Inviata').length,
-    Scadute:         subaffidamenti.filter(d => d.stato === 'Scaduta').length,
-    'Richiesta info': subaffidamenti.filter(d => d.stato === 'Richiesta Informazioni').length,
-    Attivate:        subaffidamenti.filter(d => d.stato === 'Attivata').length,
-    Archivio:        subaffidamenti.filter(d => ARCHIVIO_STATI.includes(d.stato)).length,
-  }), [subaffidamenti]);
-
   const worklistData = useMemo(() => {
-    const tabStatoMap: Record<string, string[]> = {
-      'Autorizzate':     ['Autorizzata'],
-      'Inviate':         ['Inviata'],
-      'Scadute':         ['Scaduta'],
-      'Richiesta info':  ['Richiesta Informazioni'],
-      'Attivate':        ['Attivata'],
-      'Archivio':        ARCHIVIO_STATI,
-    };
-    let data = worklistTab === 'Tutti'
-      ? subaffidamenti.filter(d => !ARCHIVIO_STATI.includes(d.stato))
-      : worklistTab === 'Archivio'
-        ? subaffidamenti.filter(d => ARCHIVIO_STATI.includes(d.stato))
-        : subaffidamenti.filter(d => (tabStatoMap[worklistTab] || []).includes(d.stato));
+    let data = [...subaffidamenti];
+
+    if (worklistSpecialFilter === 'critici') {
+      data = data.filter(d => d.stato === 'Scaduta' || (d.scadenza && isValidDate(d.scadenza) && safeDiff(d.scadenza, today) <= criticiRange));
+    } else if (worklistSpecialFilter === 'attivi') {
+      data = data.filter(d => d.stato === 'Autorizzata' || d.stato === 'Attivata');
+    } else if (worklistSpecialFilter === 'lavorate') {
+      data = data.filter(d => d.stato !== 'Inviata');
+    } else if (worklistStato) {
+      data = data.filter(d => d.stato === worklistStato);
+    }
 
     if (worklistAppSearch) data = data.filter(d => (d.appaltatore || d.app || '').toLowerCase().includes(worklistAppSearch.toLowerCase()));
     if (worklistIdSearch)  data = data.filter(d => d.id.toLowerCase().includes(worklistIdSearch.toLowerCase()));
     if (worklistTipo)      data = data.filter(d => d.tipo === worklistTipo);
-    if (worklistStato)     data = data.filter(d => d.stato === worklistStato);
-    // Ordina per data creazione decrescente (più recente prima)
-    // Gestisce sia mm/dd/yyyy (sito aziendale) che yyyy-MM-dd
+
     const parseCreazione = (s: string | undefined) => {
       if (!s) return 0;
       if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
@@ -597,7 +579,7 @@ const Dashboard: React.FC = () => {
       return new Date(s).getTime() || 0;
     };
     return [...data].sort((a, b) => parseCreazione(b.dataCreazione || b.inserito) - parseCreazione(a.dataCreazione || a.inserito));
-  }, [subaffidamenti, worklistTab, worklistAppSearch, worklistIdSearch, worklistTipo, worklistStato]);
+  }, [subaffidamenti, worklistSpecialFilter, worklistAppSearch, worklistIdSearch, worklistTipo, worklistStato, criticiRange]);
 
   const complianceHealth = useMemo(() => {
     const tot = documenti.length;
@@ -713,7 +695,7 @@ const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const worklistRef = useRef<HTMLDivElement>(null);
 
-  const handleKpiClick = (mode: 'all' | 'subappalto' | 'subcontratto' | 'critici' | 'attivi' | 'docs') => {
+  const handleKpiClick = (mode: 'all' | 'subappalto' | 'subcontratto' | 'critici' | 'attivi' | 'lavorate' | 'docs') => {
     setWorklistAppSearch('');
     setWorklistIdSearch('');
     setWorklistStato('');
@@ -721,11 +703,12 @@ const Dashboard: React.FC = () => {
       navigate('/storico');
       return;
     }
-    if (mode === 'subappalto') { setWorklistTipo('Subappalto'); setWorklistTab('Tutti'); }
-    else if (mode === 'subcontratto') { setWorklistTipo('Subcontratto'); setWorklistTab('Tutti'); }
-    else if (mode === 'attivi') { setWorklistTipo(''); setWorklistTab('Autorizzate'); }
-    else if (mode === 'critici') { setWorklistTipo(''); setWorklistTab('Scadute'); }
-    else { setWorklistTipo(''); setWorklistTab('Tutti'); }
+    if (mode === 'subappalto') { setWorklistTipo('Subappalto'); setWorklistStato(''); setWorklistSpecialFilter(null); }
+    else if (mode === 'subcontratto') { setWorklistTipo('Subcontratto'); setWorklistStato(''); setWorklistSpecialFilter(null); }
+    else if (mode === 'attivi') { setWorklistTipo(''); setWorklistStato(''); setWorklistSpecialFilter('attivi'); }
+    else if (mode === 'critici') { setWorklistTipo(''); setWorklistStato(''); setWorklistSpecialFilter('critici'); }
+    else if (mode === 'lavorate') { setWorklistTipo(''); setWorklistStato(''); setWorklistSpecialFilter('lavorate'); }
+    else { setWorklistTipo(''); setWorklistStato(''); setWorklistSpecialFilter(null); }
     setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   };
 
@@ -1460,7 +1443,7 @@ const Dashboard: React.FC = () => {
             )
           },
           { label: 'AUTORIZZATI / ATTIVI', value: stats.ok, trend: `${stats.okPct}% conformi`, color: '#534AB7', mode: 'attivi', glow: 'shadow-[0_0_15px_rgba(83,74,183,0.15)]' },
-          { label: 'PRATICHE LAVORATE', value: stats.lavorate, trend: `${stats.lavoratePct}% gestite`, color: '#a89ef8', mode: 'all', glow: 'shadow-[0_0_15_rgba(168,158,248,0.15)]' },
+          { label: 'PRATICHE LAVORATE', value: stats.lavorate, trend: `${stats.lavoratePct}% gestite`, color: '#a89ef8', mode: 'lavorate', glow: 'shadow-[0_0_15_rgba(168,158,248,0.15)]' },
         ].map((kpi, i) => (
           <motion.div 
             key={kpi.label}
@@ -1644,171 +1627,6 @@ const Dashboard: React.FC = () => {
               })}
             </div>
           </div>
-        </div>
-      </div>
-
-      {/* FILTERS & ACTIONS */}
-      <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.3)]">
-        <div className="flex items-end justify-between gap-3 flex-nowrap">
-          <div className="flex items-end gap-3 flex-1">
-            <div className="flex flex-col gap-1 relative flex-1 max-w-[220px]">
-              <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Appaltatore</label>
-              <div className="relative group">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#3a5a7a] group-focus-within:text-[#534AB7] transition-colors" />
-                <input
-                  type="text"
-                  value={appSearch}
-                  onChange={(e) => {
-                    setAppSearch(e.target.value);
-                    setShowAppDropdown(true);
-                    if (!e.target.value) setSelectedApp(null);
-                  }}
-                  onFocus={() => setShowAppDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowAppDropdown(false), 200)}
-                  placeholder="Cerca appaltatore.."
-                  className="w-full h-10 pl-10 pr-10 bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-xs outline-none focus:border-[#534AB7]/50 focus:ring-1 focus:ring-[#534AB7]/30 transition-all"
-                />
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[#3a5a7a] pointer-events-none group-focus-within:text-[#534AB7] transition-colors">
-                  <ChevronRight size={14} className="rotate-90" />
-                </div>
-                <AnimatePresence>
-                  {showAppDropdown && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: 5 }}
-                      className="absolute top-11 left-0 right-0 bg-[#0f2035] border border-[#534AB7]/35 rounded-xl z-[100] max-h-64 overflow-y-auto shadow-[0_10px_40px_rgba(0,0,0,0.5)] custom-scrollbar"
-                    >
-                      {filteredAppList.length > 0 ? (
-                        filteredAppList.map(app => (
-                          <div
-                            key={app}
-                            onMouseDown={() => {
-                              setSelectedApp(app);
-                              setAppSearch(app);
-                              setShowAppDropdown(false);
-                            }}
-                            className="p-3 text-xs text-[#c8ddf0] cursor-pointer border-b border-white/5 hover:bg-[#534AB7]/20 hover:text-[#a89ef8] transition-colors"
-                          >
-                            {highlightMatch(app, appSearch)}
-                          </div>
-                        ))
-                      ) : (
-                        <div className="p-4 text-xs text-[#3a5a7a] text-center">Nessun risultato</div>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1 min-w-[160px] relative">
-              <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Contratto</label>
-              <div className="relative group">
-                <FileText size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#3a5a7a] group-focus-within:text-[#534AB7] transition-colors" />
-                <input
-                  type="text"
-                  value={contrattoSearch}
-                  onChange={(e) => setContrattoSearch(e.target.value)}
-                  placeholder="Cerca ID contratto.."
-                  className="w-full h-10 pl-10 pr-10 bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-xs outline-none focus:border-[#534AB7]/50 focus:ring-1 focus:ring-[#534AB7]/30 transition-all"
-                />
-                {contrattoSearch && (
-                  <button 
-                    onClick={() => setContrattoSearch('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#3a5a7a] hover:text-[#E24B4A] transition-colors"
-                  >
-                    <X size={14} />
-                  </button>
-                )}
-              </div>
-              
-              <AnimatePresence>
-                {foundContract && (
-                  <motion.div 
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    onClick={() => {
-                      setContrattoSearch(foundContract.id);
-                      handleRowClick(foundContract);
-                    }}
-                    className="absolute top-16 left-0 right-0 bg-[#0f2035] border border-[#534AB7]/40 rounded-xl p-3 z-[110] shadow-2xl cursor-pointer hover:bg-[#162840] transition-all group"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-[10px] font-bold text-[#534AB7] uppercase tracking-wider">Anteprima Pratica</div>
-                      <div className="text-[9px] px-1.5 py-0.5 rounded bg-[#534AB7]/20 text-[#a89ef8] font-mono">{foundContract.id}</div>
-                    </div>
-                    <div className="text-xs text-[#ddeeff] font-bold mb-1 truncate">{foundContract.sub}</div>
-                    <div className="text-[10px] text-[#6a8aaa] truncate">{foundContract.app}</div>
-                    <div className="mt-2 pt-2 border-t border-white/5 flex items-center justify-between">
-                      <div className="text-[9px] text-[#3a5a7a] uppercase font-bold">{foundContract.stato}</div>
-                      <ArrowUpRight size={12} className="text-[#534AB7] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            <div className="flex flex-col gap-1 min-w-[140px]">
-              <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Tipo</label>
-              <select 
-                value={tipoFilter}
-                onChange={e => setTipoFilter(e.target.value)}
-                className="h-10 bg-[#0b1a2e] border border-white/10 rounded-xl text-[#8ab0c8] text-xs px-3 outline-none focus:border-[#534AB7]/50 transition-all cursor-pointer"
-              >
-                <option value="">Tutti i tipi</option>
-                <option value="Subappalto">Subappalto</option>
-                <option value="Subcontratto">Subcontratto</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col gap-1 min-w-[155px]">
-              <label className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold">Stato</label>
-              <select 
-                value={statoFilter}
-                onChange={e => setStatoFilter(e.target.value)}
-                className="h-10 bg-[#0b1a2e] border border-white/10 rounded-xl text-[#8ab0c8] text-xs px-3 outline-none focus:border-[#534AB7]/50 transition-all cursor-pointer"
-              >
-                <option value="">Tutti gli stati</option>
-                {Object.keys(STATO_COLORS).map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowGantt(!showGantt)}
-                className={cn(
-                  "h-10 px-4 rounded-xl flex items-center gap-2 text-xs font-bold transition-all border",
-                  showGantt ? "bg-[#534AB7] text-white border-[#534AB7]" : "bg-white/5 text-[#6a8aaa] border-white/10 hover:bg-white/10"
-                )}
-              >
-                <GanttChartSquare size={16} />
-                <span className="hidden sm:inline">{showGantt ? 'Vista Tabella' : 'Vista Timeline'}</span>
-              </button>
-              <button 
-                onClick={() => {
-                  setSelectedApp(null);
-                  setAppSearch('');
-                  setContrattoSearch('');
-                  setTipoFilter('');
-                  setStatoFilter('');
-                  setWorklistTab('Tutti');
-                  setWorklistTipo('');
-                }}
-                className="h-10 px-4 bg-[#534AB7]/10 border border-[#534AB7]/30 rounded-xl text-[#a89ef8] text-xs font-bold hover:bg-[#534AB7]/20 transition-all flex items-center gap-2"
-              >
-                <RotateCcw size={14} /> Reset
-              </button>
-            </div>
-          </div>
-
-          <button
-            onClick={() => setShowArchivioModal(true)}
-            className="h-10 px-4 bg-[#1D9E75]/10 border border-[#1D9E75]/30 rounded-xl text-[#5DCAA5] text-xs font-bold hover:bg-[#1D9E75]/20 transition-all flex items-center gap-2 shrink-0"
-          >
-            <Archive size={14} /> Vai all'Archivio
-          </button>
         </div>
       </div>
 
@@ -2100,256 +1918,8 @@ const Dashboard: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* SEZIONI ROW A + ROW B - ordinate visivamente con flex */}
-      <div className="flex flex-col gap-5">
-
-      {/* ROW B: ULTIMI INSERITI | TREND | DISTRIBUZIONE */}
-      <div className="grid grid-cols-3 gap-4 order-2">
-        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-semibold text-[#7a9ab8] flex items-center gap-2">
-              <Clock size={14} /> Ultimi Inseriti
-            </h3>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-[#378ADD] text-white">RECENTI</span>
-              <button
-                onClick={() => navigate('/subaffidamenti')}
-                className="text-[10px] px-2.5 py-1 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all"
-              >
-                Vedi ATT
-              </button>
-              <button
-                onClick={() => navigate('/storico')}
-                className="text-[10px] px-2.5 py-1 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all"
-              >
-                Vedi STO
-              </button>
-            </div>
-          </div>
-          <div className="space-y-1">
-            {recenti.length > 0 ? recenti.map((d, i) => (
-              <div key={i} className="flex items-center gap-3 py-2.5 border-b border-white/5 last:border-0 last:pb-0 group cursor-pointer" onClick={() => handleRowClick(d)}>
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs text-[#8ab0c8] font-medium truncate group-hover:text-[#ddeeff] transition-colors">{d.appaltatore || d.app}</div>
-                  <div className="text-[10px] text-[#2a4a6a] mt-0.5 truncate">{d.subfornitore || d.sub} • {d.tipo}</div>
-                </div>
-                <span className={cn("pill shrink-0", STATO_CLS[d.stato] || "bg-white/5 text-[#5a7a9a]")}>
-                  {d.stato.replace('Richiesta Informazioni', 'Rich. Info')}
-                </span>
-              </div>
-            )) : (
-              <div className="text-center py-10 text-xs text-[#2a4a6a]">Nessun dato</div>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 space-y-3 shadow-xl">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h3 className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-widest flex items-center gap-2">
-              <Activity size={14} className="text-[#534AB7]" /> Trend Cumulativo Subappalti
-            </h3>
-            <div className="flex items-center gap-1">
-              {(['3M','6M','1A','ALL'] as const).map(w => (
-                <button key={w} onClick={() => setTrendWindow(w)}
-                  className={cn('text-[9px] font-bold px-2 py-0.5 rounded transition-all border',
-                    trendWindow === w
-                      ? 'bg-[#534AB7] border-[#534AB7] text-white'
-                      : 'border-white/10 text-[#3a5a7a] hover:text-[#8ab0c8] hover:border-white/20 bg-transparent')}>
-                  {w}
-                </button>
-              ))}
-              <button onClick={() => handleExportChartPNG(trendChartRef2)}
-                className="text-[9px] font-bold px-2 py-0.5 rounded border border-white/10 text-[#3a5a7a] hover:text-[#8ab0c8] hover:border-white/20 bg-transparent transition-all ml-1">
-                PNG
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center gap-4 mb-1">
-            <span className="flex items-center gap-1.5 text-[9px] text-[#6a8aaa] uppercase font-bold">
-              <span className="w-5 h-0.5 bg-[#534AB7] inline-block rounded" /> Importo SUB (€ 000)
-            </span>
-            <span className="flex items-center gap-1.5 text-[9px] text-[#6a8aaa] uppercase font-bold">
-              <span className="w-5 h-0.5 border-t-2 border-dashed border-[#1D9E75] inline-block" /> Budget NORM. (€ 000)
-            </span>
-          </div>
-          <div className="h-[220px] w-full" ref={trendChartRef2}>
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={cumulativeData}>
-                <defs>
-                  <linearGradient id="gradSub2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#534AB7" stopOpacity={0.35}/>
-                    <stop offset="95%" stopColor="#534AB7" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="gradBudget2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#1D9E75" stopOpacity={0.18}/>
-                    <stop offset="95%" stopColor="#1D9E75" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="4 4" stroke="#ffffff06" vertical={false} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill:'#3a5a7a',fontSize:9}} dy={8} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill:'#2a4a6a',fontSize:8}} width={36} />
-                <RechartsTooltip
-                  contentStyle={{backgroundColor:'#0d1f36',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'10px',fontSize:'10px',padding:'8px 12px'}}
-                  itemStyle={{color:'#ddeeff'}}
-                  formatter={(v: any, name: string) => [`€ ${Number(v).toLocaleString('it')}k`, name === 'sub' ? 'Importo SUB' : 'Budget NORM.']}
-                />
-                <Area type="monotone" dataKey="budget" stroke="#1D9E75" strokeWidth={1.5} strokeDasharray="6 4" fillOpacity={1} fill="url(#gradBudget2)" />
-                <Area type="monotone" dataKey="sub"    stroke="#534AB7" strokeWidth={2}   fillOpacity={1} fill="url(#gradSub2)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-semibold text-[#7a9ab8] flex items-center gap-2">
-              Distribuzione Stati
-              {selectedApp && <span className="text-[#534AB7] font-bold">— {selectedApp}</span>}
-              <span className="text-[#534AB7] font-bold">—{' '}
-                {worklistTab === 'Tutti' && !worklistTipo ? 'TOTALE' :
-                 worklistTipo === 'Subappalto' ? 'SUBAPPALTI' :
-                 worklistTipo === 'Subcontratto' ? 'SUBCONTRATTI' :
-                 worklistTab.toUpperCase()}
-              </span>
-            </h3>
-            <div className="flex items-center gap-2">
-              <div className="text-[9px] text-[#3a5a7a] bg-white/5 border border-white/10 rounded-full px-2.5 py-0.5 font-bold uppercase tracking-tighter">
-                {worklistData.length} {worklistData.length === 1 ? 'pratica' : 'pratiche'}
-              </div>
-              <button
-                onClick={() => {
-                  setStatoFilter('');
-                  setSelectedApp(null);
-                  setAppSearch('');
-                  setTipoFilter('');
-                  setWorklistTab('Tutti');
-                  setWorklistTipo('');
-                  setWorklistAppSearch('');
-                  setWorklistIdSearch('');
-                  setWorklistStato('');
-                }}
-                className="text-[9px] text-[#534AB7] hover:underline flex items-center gap-1"
-              >
-                ↺ Reset
-              </button>
-            </div>
-          </div>
-          <div className="flex items-center gap-6">
-            <div 
-              className="relative w-32 h-32 shrink-0"
-              onMouseMove={(e) => {
-                setMousePos({ x: e.clientX, y: e.clientY });
-              }}
-            >
-              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
-                {/* Track background */}
-                <circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="22" />
-                
-                {(() => {
-                  let offset = 0;
-                  const circ = 2 * Math.PI * 44;
-                  const totalDonutCount = selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp).length : subaffidamenti.length;
-                  return donutData.map(([stato, cnt]) => {
-                    const pct = cnt / (totalDonutCount || 1);
-                    const gap = 0; // zero gap
-                    const dash = Math.max(0, pct * circ - gap);
-                    const currentOffset = offset;
-                    offset += pct * circ;
-                    return (
-                      <motion.circle
-                        key={stato}
-                        initial={{ strokeDasharray: `0 ${circ}` }}
-                        animate={{ strokeDasharray: `${dash} ${circ - dash}` }}
-                        transition={{ duration: 1, ease: "easeInOut" }}
-                        cx="60" cy="60" r="44"
-                        fill="none"
-                        stroke={STATO_COLORS[stato] || '#444'}
-                        strokeWidth="22"
-                        strokeDashoffset={-currentOffset}
-                        className="cursor-pointer hover:opacity-80 transition-opacity"
-                        onMouseEnter={() => setHoveredStato(stato)}
-                        onMouseLeave={() => setHoveredStato(null)}
-                        onClick={() => {
-                          setWorklistStato(stato);
-                          setWorklistTab('Tutti');
-                          setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-                        }}
-                      />
-                    );
-                  });
-                })()}
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none overflow-hidden">
-                <div className="flex flex-col items-center justify-center">
-                  <div className="text-2xl font-bold text-[#ddeeff] leading-none">
-                    {selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp).length : subaffidamenti.length}
-                  </div>
-                  <div className="text-[8px] text-[#3a5a7a] font-bold uppercase tracking-widest mt-1">
-                    Totale
-                  </div>
-                </div>
-              </div>
-
-              {/* DYNAMIC MOUSE-FOLLOWING TOOLTIP */}
-              <AnimatePresence>
-                {hoveredStato && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.9, y: 10 }}
-                    animate={{ 
-                      opacity: 1, 
-                      scale: 1, 
-                      y: 0,
-                      left: mousePos.x + 20,
-                      top: mousePos.y + 20
-                    }}
-                    exit={{ opacity: 0, scale: 0.9, y: 10 }}
-                    className="fixed pointer-events-none z-[1000] min-w-[200px] bg-[#0b1a2e]/95 backdrop-blur-md border border-white/10 rounded-xl p-3 shadow-[0_10px_40px_rgba(0,0,0,0.6)]"
-                    style={{ left: mousePos.x + 20, top: mousePos.y + 20 }}
-                  >
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATO_COLORS[hoveredStato] }} />
-                      <div className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-wider">{hoveredStato}</div>
-                    </div>
-                    <div className="text-[11px] text-[#c8ddf0] font-mono mb-1">
-                      {(() => {
-                        const totalDonutCount = selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp).length : subaffidamenti.length;
-                        const count = (selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp) : subaffidamenti).filter(d => d.stato === hoveredStato).length;
-                        return (
-                          <>
-                            {count} {count === 1 ? 'pratica' : 'pratiche'} 
-                            <span className="text-[#5a7a9a] ml-1.5">({Math.round((count / (totalDonutCount || 1)) * 100)}%)</span>
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div className="text-[9px] text-[#5a7a9a] leading-relaxed italic border-t border-white/5 pt-1.5 mt-1.5">
-                      {STATO_DESCRIPTIONS[hoveredStato]}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-            <div className="flex-1 space-y-2">
-              {donutData.map(([stato, cnt]) => (
-                <div key={stato} className="flex items-center justify-between group cursor-pointer" onClick={() => {
-                  setWorklistStato(stato);
-                  setWorklistTab('Tutti');
-                  setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
-                }}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATO_COLORS[stato] }} />
-                    <span className="text-[10px] text-[#7a9ab8] group-hover:text-[#ddeeff] transition-colors">{stato}</span>
-                  </div>
-                  <span className="text-[10px] font-mono text-[#ddeeff]">{cnt}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ROW A: SCADENZE & SOGLIE CONTRATTI */}
-      <div className="grid grid-cols-2 gap-4 order-1">
+      {/* PENDENZE | SOGLIE | DISTRIBUZIONE */}
+      <div className="grid grid-cols-3 gap-4">
         {/* ── PENDENZE DOCUMENTALI ── */}
         <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.2)] flex flex-col">
           <div className="flex justify-between items-center mb-3">
@@ -2475,24 +2045,169 @@ const Dashboard: React.FC = () => {
             )}
           </div>
         </div>
+
+        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xs font-semibold text-[#7a9ab8] flex items-center gap-2">
+              Distribuzione Stati
+              {selectedApp && <span className="text-[#534AB7] font-bold">— {selectedApp}</span>}
+              <span className="text-[#534AB7] font-bold">—{' '}
+                {!worklistTipo && !worklistStato ? 'TOTALE' :
+                 worklistTipo === 'Subappalto' ? 'SUBAPPALTI' :
+                 worklistTipo === 'Subcontratto' ? 'SUBCONTRATTI' :
+                 worklistStato ? worklistStato.toUpperCase() : 'TOTALE'}
+              </span>
+            </h3>
+            <div className="flex items-center gap-2">
+              <div className="text-[9px] text-[#3a5a7a] bg-white/5 border border-white/10 rounded-full px-2.5 py-0.5 font-bold uppercase tracking-tighter">
+                {worklistData.length} {worklistData.length === 1 ? 'pratica' : 'pratiche'}
+              </div>
+              <button
+                onClick={() => {
+                  setStatoFilter('');
+                  setSelectedApp(null);
+                  setAppSearch('');
+                  setTipoFilter('');
+                  setWorklistTipo('');
+                  setWorklistAppSearch('');
+                  setWorklistIdSearch('');
+                  setWorklistStato('');
+                  setWorklistSpecialFilter(null);
+                }}
+                className="text-[9px] text-[#534AB7] hover:underline flex items-center gap-1"
+              >
+                ↺ Reset
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-6">
+            <div 
+              className="relative w-32 h-32 shrink-0"
+              onMouseMove={(e) => {
+                setMousePos({ x: e.clientX, y: e.clientY });
+              }}
+            >
+              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                {/* Track background */}
+                <circle cx="60" cy="60" r="44" fill="none" stroke="rgba(255,255,255,0.03)" strokeWidth="22" />
+                
+                {(() => {
+                  let offset = 0;
+                  const circ = 2 * Math.PI * 44;
+                  const totalDonutCount = selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp).length : subaffidamenti.length;
+                  return donutData.map(([stato, cnt]) => {
+                    const pct = cnt / (totalDonutCount || 1);
+                    const gap = 0; // zero gap
+                    const dash = Math.max(0, pct * circ - gap);
+                    const currentOffset = offset;
+                    offset += pct * circ;
+                    return (
+                      <motion.circle
+                        key={stato}
+                        initial={{ strokeDasharray: `0 ${circ}` }}
+                        animate={{ strokeDasharray: `${dash} ${circ - dash}` }}
+                        transition={{ duration: 1, ease: "easeInOut" }}
+                        cx="60" cy="60" r="44"
+                        fill="none"
+                        stroke={STATO_COLORS[stato] || '#444'}
+                        strokeWidth="22"
+                        strokeDashoffset={-currentOffset}
+                        className="cursor-pointer hover:opacity-80 transition-opacity"
+                        onMouseEnter={() => setHoveredStato(stato)}
+                        onMouseLeave={() => setHoveredStato(null)}
+                        onClick={() => {
+                          setWorklistStato(stato); setWorklistSpecialFilter(null);
+                          setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                        }}
+                      />
+                    );
+                  });
+                })()}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none overflow-hidden">
+                <div className="flex flex-col items-center justify-center">
+                  <div className="text-2xl font-bold text-[#ddeeff] leading-none">
+                    {selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp).length : subaffidamenti.length}
+                  </div>
+                  <div className="text-[8px] text-[#3a5a7a] font-bold uppercase tracking-widest mt-1">
+                    Totale
+                  </div>
+                </div>
+              </div>
+
+              {/* DYNAMIC MOUSE-FOLLOWING TOOLTIP */}
+              <AnimatePresence>
+                {hoveredStato && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                    animate={{ 
+                      opacity: 1, 
+                      scale: 1, 
+                      y: 0,
+                      left: mousePos.x + 20,
+                      top: mousePos.y + 20
+                    }}
+                    exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                    className="fixed pointer-events-none z-[1000] min-w-[200px] bg-[#0b1a2e]/95 backdrop-blur-md border border-white/10 rounded-xl p-3 shadow-[0_10px_40px_rgba(0,0,0,0.6)]"
+                    style={{ left: mousePos.x + 20, top: mousePos.y + 20 }}
+                  >
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATO_COLORS[hoveredStato] }} />
+                      <div className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-wider">{hoveredStato}</div>
+                    </div>
+                    <div className="text-[11px] text-[#c8ddf0] font-mono mb-1">
+                      {(() => {
+                        const totalDonutCount = selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp).length : subaffidamenti.length;
+                        const count = (selectedApp ? subaffidamenti.filter(d => (d.appaltatore || d.app) === selectedApp) : subaffidamenti).filter(d => d.stato === hoveredStato).length;
+                        return (
+                          <>
+                            {count} {count === 1 ? 'pratica' : 'pratiche'} 
+                            <span className="text-[#5a7a9a] ml-1.5">({Math.round((count / (totalDonutCount || 1)) * 100)}%)</span>
+                          </>
+                        );
+                      })()}
+                    </div>
+                    <div className="text-[9px] text-[#5a7a9a] leading-relaxed italic border-t border-white/5 pt-1.5 mt-1.5">
+                      {STATO_DESCRIPTIONS[hoveredStato]}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+            <div className="flex-1 space-y-2">
+              {donutData.map(([stato, cnt]) => (
+                <div key={stato} className="flex items-center justify-between group cursor-pointer" onClick={() => {
+                  setWorklistStato(stato); setWorklistSpecialFilter(null);
+                  setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+                }}>
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATO_COLORS[stato] }} />
+                    <span className="text-[10px] text-[#7a9ab8] group-hover:text-[#ddeeff] transition-colors">{stato}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-[#ddeeff]">{cnt}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
-      </div>{/* end flex wrapper ROW A + ROW B */}
 
       {/* DETAIL PANEL (Removed from here) */}
 
       {/* ═══════════════════ WORKLIST SUBAFFIDAMENTI ═══════════════════ */}
-      <div ref={worklistRef} className="mx-6 mb-6 bg-[#0d1f36] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div ref={worklistRef} className="bg-[#0d1f36] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/8 flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2">
               <LayoutGrid size={15} className="text-[#378ADD]" />
-              {worklistStato ? worklistStato :
-               worklistTab === 'Archivio' ? 'Archivio' :
+              {worklistSpecialFilter === 'critici' ? 'Critici / Scaduti' :
+               worklistSpecialFilter === 'attivi' ? 'Autorizzati / Attivi' :
+               worklistSpecialFilter === 'lavorate' ? 'Pratiche Lavorate' :
+               worklistStato ? worklistStato :
                worklistTipo === 'Subappalto' ? 'Subappalti' :
                worklistTipo === 'Subcontratto' ? 'Subcontratti' :
-               worklistTab !== 'Tutti' ? worklistTab :
                'Tutti i Subaffidamenti'}
             </h3>
             <span className="text-[10px] font-bold text-[#a89ef8] bg-[#534AB7]/15 border border-[#534AB7]/25 px-2.5 py-0.5 rounded-full">
@@ -2528,7 +2243,7 @@ const Dashboard: React.FC = () => {
               ))}
             </select>
             {/* Reset */}
-            <button onClick={() => { setWorklistAppSearch(''); setWorklistIdSearch(''); setWorklistTipo(''); setWorklistStato(''); setWorklistTab('Tutti'); }}
+            <button onClick={() => { setWorklistAppSearch(''); setWorklistIdSearch(''); setWorklistTipo(''); setWorklistStato(''); setWorklistSpecialFilter(null); }}
               className="h-7 px-2.5 text-[9px] rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
               <RotateCcw size={10} /> Reset
             </button>
@@ -2538,16 +2253,13 @@ const Dashboard: React.FC = () => {
               <FileSpreadsheet size={10} /> Excel
             </button>
             {/* PDF */}
-            <button onClick={() => handleExportPDF(worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti'), worklistData)}
+            <button onClick={() => handleExportPDF(worklistStato || worklistTipo || 'Tutti i Subaffidamenti', worklistData)}
               className="h-7 px-2.5 text-[9px] rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
               <Download size={10} /> PDF
             </button>
             {/* Genera report bulk */}
             <button
-              onClick={() => handleGeneraReportBulk(
-                worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti'),
-                worklistData
-              )}
+              onClick={() => handleGeneraReportBulk(worklistStato || worklistTipo || 'Tutti i Subaffidamenti', worklistData)}
               className="h-7 px-3 text-[9px] font-bold rounded-lg border border-[#1D9E75]/40 text-[#5DCAA5] bg-[#1D9E75]/10 hover:bg-[#1D9E75]/20 transition-all flex items-center gap-1.5"
             >
               <Download size={10} /> Genera report
@@ -2560,14 +2272,6 @@ const Dashboard: React.FC = () => {
                   : 'border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10')}>
               <GanttChartSquare size={10} /> Timeline
             </button>
-            {/* Archivio toggle */}
-            <button onClick={() => setWorklistTab(worklistTab === 'Archivio' ? 'Tutti' : 'Archivio')}
-              className={cn('h-7 px-3 text-[9px] font-bold rounded-lg border transition-all flex items-center gap-1.5',
-                worklistTab === 'Archivio'
-                  ? 'bg-[#F5A800]/15 border-[#F5A800]/30 text-[#F5A800]'
-                  : 'border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10')}>
-              <Archive size={10} /> Archivio
-            </button>
             {/* Density */}
             <div className="flex items-center gap-0.5 ml-1">
               {(['compact','normal','large'] as const).map(d => (
@@ -2579,23 +2283,6 @@ const Dashboard: React.FC = () => {
               ))}
             </div>
           </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex items-center gap-1 px-4 py-2 border-b border-white/5 overflow-x-auto">
-          {(['Tutti','Autorizzate','Inviate','Scadute','Richiesta info','Attivate'] as const).map(tab => (
-            <button key={tab} onClick={() => setWorklistTab(tab)}
-              className={cn('flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-lg whitespace-nowrap transition-all border',
-                worklistTab === tab
-                  ? 'bg-[#534AB7]/20 border-[#534AB7]/40 text-[#a89ef8]'
-                  : 'border-transparent text-[#3a5a7a] hover:text-[#8ab0c8] hover:bg-white/5')}>
-              {tab}
-              <span className={cn('text-[9px] px-1.5 py-0.5 rounded-full font-mono',
-                worklistTab === tab ? 'bg-[#534AB7]/30 text-[#a89ef8]' : 'bg-white/5 text-[#2a4a6a]')}>
-                {worklistCounts[tab]}
-              </span>
-            </button>
-          ))}
         </div>
 
         {/* Gantt Timeline View */}
@@ -2658,6 +2345,7 @@ const Dashboard: React.FC = () => {
                   { key: 'id',       label: 'ID' },
                   { key: 'app',      label: 'Appaltatore' },
                   { key: 'sub',      label: 'Subfornitore' },
+                  { key: 'oggetto',  label: 'Oggetto' },
                   { key: 'tipo',     label: 'Tipo' },
                   { key: 'stato',    label: 'Stato' },
                   { key: 'scadenza', label: 'Scadenza' },
@@ -2678,14 +2366,14 @@ const Dashboard: React.FC = () => {
             </thead>
             <tbody>
               {worklistData.length === 0 ? (
-                <tr><td colSpan={9} className="py-12 text-center text-[#2a4a6a] text-xs italic">Nessun risultato</td></tr>
+                <tr><td colSpan={10} className="py-12 text-center text-[#2a4a6a] text-xs italic">Nessun risultato</td></tr>
               ) : (() => {
                 const pageSize = worklistDensity === 'compact' ? 20 : worklistDensity === 'normal' ? 10 : 6;
                 let sorted = [...worklistData];
                 if (sortCol) {
                   sorted.sort((a: any, b: any) => {
-                    const va = sortCol === 'id' ? a.id : sortCol === 'app' ? (a.appaltatore||a.app||'') : sortCol === 'sub' ? (a.subfornitore||a.sub||'') : sortCol === 'tipo' ? (a.tipo||'') : sortCol === 'stato' ? (a.stato||'') : (a.scadenza||'');
-                    const vb = sortCol === 'id' ? b.id : sortCol === 'app' ? (b.appaltatore||b.app||'') : sortCol === 'sub' ? (b.subfornitore||b.sub||'') : sortCol === 'tipo' ? (b.tipo||'') : sortCol === 'stato' ? (b.stato||'') : (b.scadenza||'');
+                    const va = sortCol === 'id' ? a.id : sortCol === 'app' ? (a.appaltatore||a.app||'') : sortCol === 'sub' ? (a.subfornitore||a.sub||'') : sortCol === 'oggetto' ? (a.oggettoRichiesta||a.oggetto||'') : sortCol === 'tipo' ? (a.tipo||'') : sortCol === 'stato' ? (a.stato||'') : (a.scadenza||'');
+                    const vb = sortCol === 'id' ? b.id : sortCol === 'app' ? (b.appaltatore||b.app||'') : sortCol === 'sub' ? (b.subfornitore||b.sub||'') : sortCol === 'oggetto' ? (b.oggettoRichiesta||b.oggetto||'') : sortCol === 'tipo' ? (b.tipo||'') : sortCol === 'stato' ? (b.stato||'') : (b.scadenza||'');
                     const cmp = String(va||'').localeCompare(String(vb||''), 'it', { numeric: true });
                     return sortDir === 'asc' ? cmp : -cmp;
                   });
@@ -2698,6 +2386,9 @@ const Dashboard: React.FC = () => {
                     <td className={cn(rowPy, "px-3 text-[11px] font-bold text-[#a89ef8] font-mono whitespace-nowrap")}>{d.id}</td>
                     <td className={cn(rowPy, "px-3 text-xs text-[#c8ddf0] font-medium max-w-[180px] truncate")}>{d.appaltatore || d.app}</td>
                     <td className={cn(rowPy, "px-3 text-xs text-[#8ab0c8] max-w-[160px] truncate")}>{d.subfornitore || d.sub || '—'}</td>
+                    <td className={cn(rowPy, "px-3 text-[11px] text-[#6a8aaa] max-w-[200px]")} title={d.oggettoRichiesta || d.oggetto || ''}>
+                      <span className="block truncate">{d.oggettoRichiesta || d.oggetto || <span className="text-[#2a4a6a]">—</span>}</span>
+                    </td>
                     <td className={cn(rowPy, "px-3")}>
                       <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-white/8 border border-white/10 text-[#8ab0c8] whitespace-nowrap">{d.tipo}</span>
                     </td>
@@ -2955,14 +2646,14 @@ const Dashboard: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <LayoutGrid size={16} className="text-[#378ADD]" />
                   <span className="text-sm font-bold text-[#ddeeff]">
-                    {worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti')}
+                    {worklistStato || worklistTipo || 'Tutti i Subaffidamenti'}
                   </span>
                   <span className="text-[10px] font-bold text-[#a89ef8] bg-[#534AB7]/15 border border-[#534AB7]/25 px-2.5 py-1 rounded-full">
                     {worklistData.length} pratiche
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => handleExportPDF(worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti'), worklistData)}
+                  <button onClick={() => handleExportPDF(worklistStato || worklistTipo || 'Tutti i Subaffidamenti', worklistData)}
                     className="text-[10px] px-3 py-1.5 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
                     <Download size={12} /> PDF
                   </button>
@@ -2984,6 +2675,7 @@ const Dashboard: React.FC = () => {
                         { key: 'id',       label: 'ID' },
                         { key: 'app',      label: 'Appaltatore' },
                         { key: 'sub',      label: 'Subfornitore' },
+                        { key: 'oggetto',  label: 'Oggetto' },
                         { key: 'tipo',     label: 'Tipo' },
                         { key: 'stato',    label: 'Stato' },
                         { key: 'scadenza', label: 'Scadenza' },
@@ -3008,8 +2700,8 @@ const Dashboard: React.FC = () => {
                       let sorted = [...worklistData];
                       if (sortCol) {
                         sorted.sort((a: any, b: any) => {
-                          const va = sortCol === 'id' ? a.id : sortCol === 'app' ? (a.appaltatore||a.app||'') : sortCol === 'sub' ? (a.subfornitore||a.sub||'') : sortCol === 'tipo' ? (a.tipo||'') : sortCol === 'stato' ? (a.stato||'') : (a.scadenza||'');
-                          const vb = sortCol === 'id' ? b.id : sortCol === 'app' ? (b.appaltatore||b.app||'') : sortCol === 'sub' ? (b.subfornitore||b.sub||'') : sortCol === 'tipo' ? (b.tipo||'') : sortCol === 'stato' ? (b.stato||'') : (b.scadenza||'');
+                          const va = sortCol === 'id' ? a.id : sortCol === 'app' ? (a.appaltatore||a.app||'') : sortCol === 'sub' ? (a.subfornitore||a.sub||'') : sortCol === 'oggetto' ? (a.oggettoRichiesta||a.oggetto||'') : sortCol === 'tipo' ? (a.tipo||'') : sortCol === 'stato' ? (a.stato||'') : (a.scadenza||'');
+                          const vb = sortCol === 'id' ? b.id : sortCol === 'app' ? (b.appaltatore||b.app||'') : sortCol === 'sub' ? (b.subfornitore||b.sub||'') : sortCol === 'oggetto' ? (b.oggettoRichiesta||b.oggetto||'') : sortCol === 'tipo' ? (b.tipo||'') : sortCol === 'stato' ? (b.stato||'') : (b.scadenza||'');
                           const cmp = String(va||'').localeCompare(String(vb||''), 'it', { numeric: true });
                           return sortDir === 'asc' ? cmp : -cmp;
                         });
@@ -3022,6 +2714,9 @@ const Dashboard: React.FC = () => {
                             <td className="py-3 px-4 text-xs font-bold text-[#a89ef8] font-mono">{d.id}</td>
                             <td className="py-3 px-4 text-xs text-[#c8ddf0] font-medium max-w-[180px] truncate">{d.appaltatore || d.app}</td>
                             <td className="py-3 px-4 text-xs text-[#8ab0c8] max-w-[160px] truncate">{d.subfornitore || d.sub || '—'}</td>
+                            <td className="py-3 px-4 text-[11px] text-[#6a8aaa] max-w-[200px]" title={d.oggettoRichiesta || d.oggetto || ''}>
+                              <span className="block truncate">{d.oggettoRichiesta || d.oggetto || <span className="text-[#2a4a6a]">—</span>}</span>
+                            </td>
                             <td className="py-3 px-4">
                               <span className="text-[10px] font-medium px-2.5 py-1 rounded-full bg-white/8 border border-white/10 text-[#8ab0c8]">{d.tipo}</span>
                             </td>

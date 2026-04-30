@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase, IS_PROD } from '../lib/supabase';
 import {
   Search, ChevronDown, ChevronRight, Mail, Check, Edit2,
   Download, FileText, CheckCircle2, X, Filter, Activity,
@@ -150,6 +152,65 @@ const dayLabel = (ts: string) => {
 const LS_SCAD  = 'pser_doc_scadenze';
 const LS_VISTE = 'pser_pratiche_viste';
 const LS_LOG   = 'pser_soll_log';
+
+/* ─── Supabase helpers per doc_scadenze ─── */
+const mapDocScad = (r: Record<string, unknown>): DocScadenza => ({
+  id:                   r.id as string,
+  praticaId:            (r.pratica_id as string) || '',
+  sap:                  (r.sap as string) || '',
+  appaltatore:          (r.appaltatore as string) || '',
+  categoria:            (r.categoria as string) || '',
+  documento:            (r.documento as string) || '',
+  dataFineValidita:     r.data_fine_validita as string | undefined,
+  statoSollecito:       (r.stato_sollecito as DocScadenza['statoSollecito']) || 'da_aggiornare',
+  dataUltimoSollecito:  r.data_ultimo_sollecito as string | undefined,
+  gestitoDa:            r.gestito_da as string | undefined,
+  note:                 r.note as string | undefined,
+});
+
+const dbLoadDocScadenze = async (): Promise<DocScadenza[]> => {
+  const { data, error } = await supabase.from('doc_scadenze').select('*');
+  if (error) throw error;
+  return (data || []).map(r => mapDocScad(r as Record<string, unknown>));
+};
+
+const dbUpsertDocScadenza = async (d: DocScadenza) => {
+  await supabase.from('doc_scadenze').upsert({
+    id: d.id, pratica_id: d.praticaId, sap: d.sap, appaltatore: d.appaltatore,
+    categoria: d.categoria, documento: d.documento,
+    data_fine_validita: d.dataFineValidita ?? null,
+    stato_sollecito: d.statoSollecito,
+    data_ultimo_sollecito: d.dataUltimoSollecito ?? null,
+    gestito_da: d.gestitoDa ?? null, note: d.note ?? null,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'id' });
+};
+
+/* ─── Supabase helpers per soll_log ─── */
+const mapSollLog = (r: Record<string, unknown>): SollecitoLog => ({
+  id:          r.id as string,
+  praticaId:   (r.pratica_id as string) || '',
+  appaltatore: (r.appaltatore as string) || '',
+  documento:   (r.documento as string) || '',
+  azione:      (r.azione as SollecitoLog['azione']) || 'outlook',
+  ts:          (r.ts as string) || new Date().toISOString(),
+  gestitoDa:   (r.gestito_da as string) || '',
+  note:        r.note as string | undefined,
+});
+
+const dbLoadSollLog = async (): Promise<SollecitoLog[]> => {
+  const { data, error } = await supabase.from('soll_log').select('*').order('created_at', { ascending: false }).limit(2000);
+  if (error) throw error;
+  return (data || []).map(r => mapSollLog(r as Record<string, unknown>));
+};
+
+const dbInsertSollLog = async (entry: SollecitoLog) => {
+  await supabase.from('soll_log').insert({
+    id: entry.id, pratica_id: entry.praticaId, appaltatore: entry.appaltatore,
+    documento: entry.documento, azione: entry.azione, ts: entry.ts,
+    gestito_da: entry.gestitoDa, note: entry.note ?? null,
+  });
+};
 
 const loadArr = <T,>(key: string): T[] => {
   try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch { return []; }
@@ -384,11 +445,14 @@ const StoricoTimeline: React.FC<StoricoTimelineProps> = ({ gruppi, showPratica, 
 const GestioneSolleciti: React.FC = () => {
   const { subaffidamenti, documenti } = useData();
   const { user } = useAuth();
+  const location = useLocation();
 
   const [docScadenze,   setDocScadenze]   = useState<DocScadenza[]>(() => loadArr<DocScadenza>(LS_SCAD));
   const [praticheViste, setPraticheViste] = useState<Set<string>>(() => loadSet(LS_VISTE));
   const [sollLog,       setSollLog]       = useState<SollecitoLog[]>(() => loadArr<SollecitoLog>(LS_LOG));
-  const [selectedId,    setSelectedId]    = useState<string | null>(null);
+  const [selectedId,    setSelectedId]    = useState<string | null>(
+    (location.state as { praticaId?: string } | null)?.praticaId ?? null
+  );
   const [expandedApps,  setExpandedApps]  = useState<Set<string>>(new Set());
   const [searchApp,     setSearchApp]     = useState('');
   const [fStato,        setFStato]        = useState<StatoScadenza | ''>('');
@@ -403,6 +467,33 @@ const GestioneSolleciti: React.FC = () => {
   useEffect(() => { localStorage.setItem(LS_SCAD,  JSON.stringify(docScadenze));        }, [docScadenze]);
   useEffect(() => { localStorage.setItem(LS_VISTE, JSON.stringify([...praticheViste])); }, [praticheViste]);
   useEffect(() => { localStorage.setItem(LS_LOG,   JSON.stringify(sollLog));            }, [sollLog]);
+
+  useEffect(() => {
+    const navState = location.state as { praticaId?: string } | null;
+    if (navState?.praticaId) setSelectedId(navState.praticaId);
+  }, [location.state]);
+
+  /* ─── PROD: carica soll_log + doc_scadenze da Supabase al mount + realtime ─── */
+  useEffect(() => {
+    if (!IS_PROD) return;
+    dbLoadSollLog().then(logs => { if (logs.length > 0) setSollLog(logs); }).catch(() => {});
+    dbLoadDocScadenze().then(docs => { if (docs.length > 0) setDocScadenze(docs); }).catch(() => {});
+    const ch = supabase.channel('storico_rt')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'soll_log' }, payload => {
+        const entry = mapSollLog(payload.new as Record<string, unknown>);
+        setSollLog(prev => prev.some(l => l.id === entry.id) ? prev : [entry, ...prev]);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'doc_scadenze' }, payload => {
+        const doc = mapDocScad(payload.new as Record<string, unknown>);
+        setDocScadenze(prev => {
+          const idx = prev.findIndex(d => d.id === doc.id);
+          if (idx >= 0) { const arr = [...prev]; arr[idx] = doc; return arr; }
+          return [...prev, doc];
+        });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedPratica = useMemo(
     () => subaffidamenti.find(s => s.id === selectedId) ?? null,
@@ -539,6 +630,7 @@ const GestioneSolleciti: React.FC = () => {
       note,
     };
     setSollLog(prev => [entry, ...prev]);
+    if (IS_PROD) dbInsertSollLog(entry).catch(() => {});
   }, [user]);
 
   const selectPratica = useCallback((id: string) => {
@@ -568,6 +660,7 @@ const GestioneSolleciti: React.FC = () => {
       const idx = prev.findIndex(d => d.praticaId === selectedPratica.id && d.documento === documento);
       const base: DocScadenza = idx >= 0 ? prev[idx] : { id: crypto.randomUUID(), praticaId: selectedPratica.id, sap, appaltatore: app, categoria: cat, documento, statoSollecito: 'da_aggiornare' };
       const next: DocScadenza = { ...base, ...patch, gestitoDa: user?.nome };
+      if (IS_PROD) dbUpsertDocScadenza(next).catch(() => {});
       if (idx >= 0) { const arr = [...prev]; arr[idx] = next; return arr; }
       return [...prev, next];
     });

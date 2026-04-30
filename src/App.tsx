@@ -13,6 +13,7 @@ import ReportExport from './pages/ReportExport';
 import ImportaExcel from './pages/ImportaExcel';
 import Impostazioni from './pages/Impostazioni';
 import Rubrica from './pages/Rubrica';
+import AnalisiStatistiche from './pages/AnalisiStatistiche';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -56,6 +57,7 @@ const App: React.FC = () => {
               <Route path="importa" element={<ImportaExcel />} />
               <Route path="impostazioni" element={<Impostazioni />} />
               <Route path="rubrica" element={<Rubrica />} />
+              <Route path="analisi" element={<AnalisiStatistiche />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

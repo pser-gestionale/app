@@ -177,6 +177,26 @@ const dbInsertCC       = async (cc: { nome: string; email: string; ruolo?: strin
 const dbDeleteCC       = async (id: string) => { const { error } = await supabase.from('rubrica_cc_predefiniti').delete().eq('id', id); if (error) throw error; };
 const dbUpdateCC       = async (id: string, patch: { nome: string; email: string; ruolo?: string }) => { const { error } = await supabase.from('rubrica_cc_predefiniti').update(patch).eq('id', id); if (error) throw error; };
 
+/* ─── Sollecito log helpers (salva voce in soll_log condiviso) ─── */
+const saveSollLog = (entry: {
+  id: string; praticaId: string; appaltatore: string;
+  documento: string; azione: string; ts: string; gestitoDa: string; note?: string;
+}) => {
+  // localStorage (DEV + fallback)
+  try {
+    const prev = JSON.parse(localStorage.getItem('pser_soll_log') || '[]');
+    localStorage.setItem('pser_soll_log', JSON.stringify([entry, ...prev].slice(0, 2000)));
+  } catch {}
+  // Supabase (PROD)
+  if (IS_PROD) {
+    void supabase.from('soll_log').insert({
+      id: entry.id, pratica_id: entry.praticaId, appaltatore: entry.appaltatore,
+      documento: entry.documento, azione: entry.azione, ts: entry.ts,
+      gestito_da: entry.gestitoDa, note: entry.note ?? null,
+    });
+  }
+};
+
 /* ─── Sollecito ─── */
 interface DocScad { documento: string; dataFineValidita?: string; praticaId: string; }
 const calcStato = (d?: string): 'scaduto' | 'in_scadenza' | 'ok' | 'nr' => {
@@ -899,6 +919,8 @@ interface SollecitoModalProps {
   onClose: () => void;
 }
 const SollecitoModal: React.FC<SollecitoModalProps> = ({ contact, contatti, ccList, subaffidamenti, praticaPreselezionata, onClose }) => {
+  const { user } = useAuth();
+
   /* ── TO ── */
   const [toEmails, setToEmails] = useState<string[]>([...contact.emails]);
   const [toInput,  setToInput]  = useState('');
@@ -1021,6 +1043,17 @@ const SollecitoModal: React.FC<SollecitoModalProps> = ({ contact, contatti, ccLi
     ];
     const cc  = [...new Set(ccEmails)].join(',');
     const url = `mailto:${encodeURIComponent(to)}?${cc ? `cc=${encodeURIComponent(cc)}&` : ''}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    // Salva voce nel log solleciti (visibile in Gestione Solleciti)
+    saveSollLog({
+      id: crypto.randomUUID(),
+      praticaId: praticaId || '',
+      appaltatore: contact.azienda || '',
+      documento: 'Sollecito via Rubrica',
+      azione: 'outlook',
+      ts: new Date().toISOString(),
+      gestitoDa: user?.nome || 'Utente',
+      note: `A: ${to}${cc ? ` | CC: ${cc}` : ''} | Oggetto: ${subject}`,
+    });
     window.location.href = url;
     onClose();
   };

@@ -112,6 +112,23 @@ export interface DocumentoControllo {
   responsabile?: string;
 }
 
+export type FollowUpStato = 'da_contattare' | 'contattato' | 'risposto' | 'validato';
+
+export interface FollowUp {
+  id: string;
+  praticaId: string;
+  appaltatore: string;
+  subfornitore: string;
+  documento: string;
+  stato: FollowUpStato;
+  dataCreazione: string;
+  dataContatto?: string;
+  dataRisposta?: string;
+  dataValidazione?: string;
+  note?: string;
+  gestitoDa: string;
+}
+
 export interface ActivityLog {
   ts: string;
   tsDisplay: string;

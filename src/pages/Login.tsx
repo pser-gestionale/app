@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { motion } from 'motion/react';
-import { Link as LinkIcon, User as UserIcon, Lock, Shield, Users } from 'lucide-react';
+import { Link as LinkIcon, User as UserIcon, Lock, Shield } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { User } from '../types';
+
+const IS_DEV = import.meta.env.DEV;
 
 const Login: React.FC = () => {
   const [tab, setTab] = useState<'login' | 'register' | 'changepwd'>('login');
@@ -15,87 +17,44 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
-  const { login, isAuthenticated } = useAuth();
+  const { login, signIn, isAuthenticated } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     if (isAuthenticated) {
       navigate('/');
     }
-  }, [isAuthenticated, navigate]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     setError('');
     if (!username || !password) {
-      setError('Inserisci nome utente e password');
+      setError('Inserisci email e password');
       return;
     }
-
-    const storedUsers = localStorage.getItem('pser_users');
-    const users: User[] = storedUsers ? JSON.parse(storedUsers) : [];
-    
-    // Default users if none exist
-    if (users.length === 0) {
-      const defaultUsers: User[] = [
-        { username: 'pietro.devito', password: 'pser2026', role: 'Amministratore', nome: 'Pietro De Vito', email: 'pietro.devito@ren.eniplenitude.com', created: new Date().toISOString() },
-      ];
-      localStorage.setItem('pser_users', JSON.stringify(defaultUsers));
-      users.push(...defaultUsers);
-    }
-
-    const found = users.find(u => u.username === username && u.password === password);
-
-    if (!found) {
-      setError('Credenziali non valide. Verifica nome utente e password.');
+    const err = await signIn(username, password);
+    if (err) {
+      setError(err);
       return;
     }
-
-    setSuccess('Accesso effettuato. Benvenuto, ' + found.nome + '!');
-    setTimeout(() => {
-      login(found);
-      navigate('/');
-    }, 1000);
+    setSuccess('Accesso effettuato. Benvenuto!');
+    setTimeout(() => navigate('/'), 1000);
   };
 
   const handleRegister = () => {
+    if (!IS_DEV) return;
     setError('');
-    if (!nome || !username || !password) {
-      setError('Compila tutti i campi obbligatori');
-      return;
-    }
-    if (username.includes(' ')) {
-      setError('Il nome utente non può contenere spazi');
-      return;
-    }
-    if (password.length < 6) {
-      setError('La password deve essere di almeno 6 caratteri');
-      return;
-    }
+    if (!nome || !username || !password) { setError('Compila tutti i campi obbligatori'); return; }
+    if (username.includes(' ')) { setError('Il nome utente non può contenere spazi'); return; }
+    if (password.length < 6) { setError('La password deve essere di almeno 6 caratteri'); return; }
 
-    const storedUsers = localStorage.getItem('pser_users');
-    const users: User[] = storedUsers ? JSON.parse(storedUsers) : [];
+    const users: User[] = JSON.parse(localStorage.getItem('pser_users') || '[]');
+    if (users.some(u => u.username === username)) { setError('Nome utente già in uso, scegline un altro'); return; }
 
-    if (users.some(u => u.username === username)) {
-      setError('Nome utente già in uso, scegline un altro');
-      return;
-    }
-
-    const newUser: User = {
-      username,
-      password,
-      role,
-      nome,
-      email: '',
-      created: new Date().toISOString()
-    };
-
-    users.push(newUser);
+    users.push({ username, password, role, nome, email: '', created: new Date().toISOString() });
     localStorage.setItem('pser_users', JSON.stringify(users));
     setSuccess('Account creato con successo! Ora puoi accedere.');
-    setTimeout(() => {
-      setTab('login');
-      setSuccess('');
-    }, 1500);
+    setTimeout(() => { setTab('login'); setSuccess(''); }, 1500);
   };
 
   return (
@@ -167,13 +126,13 @@ const Login: React.FC = () => {
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-[11px] text-[#4a6a8a] font-medium flex items-center gap-1.5 px-1">
-                  <UserIcon size={12} /> Nome utente
+                  <UserIcon size={12} /> Email
                 </label>
                 <input
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="es. pietro.devito"
+                  placeholder="es. nome@esempio.com"
                   className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all"
                 />
               </div>
@@ -189,8 +148,8 @@ const Login: React.FC = () => {
                   className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all"
                 />
               </div>
-              <button 
-                onClick={handleLogin}
+              <button
+                onClick={() => void handleLogin()}
                 className="w-full h-12 bg-gradient-to-r from-[#534AB7] to-[#6358cc] rounded-xl text-[#e8e6f8] text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:translate-y-[-2px] hover:shadow-[#534AB7]/40 transition-all active:translate-y-0"
               >
                 Accedi al Sistema
@@ -199,77 +158,63 @@ const Login: React.FC = () => {
           )}
 
           {tab === 'register' && (
+            IS_DEV ? (
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-[11px] text-[#4a6a8a] font-medium flex items-center gap-1.5 px-1">
                   <UserIcon size={12} /> Nome e Cognome
                 </label>
-                <input
-                  type="text"
-                  value={nome}
-                  onChange={(e) => setNome(e.target.value)}
-                  placeholder="es. Pietro De Vito"
-                  className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all"
-                />
+                <input type="text" value={nome} onChange={(e) => setNome(e.target.value)} placeholder="es. Pietro De Vito"
+                  className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all" />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] text-[#4a6a8a] font-medium flex items-center gap-1.5 px-1">
-                  <UserIcon size={12} /> Nome utente
+                  <UserIcon size={12} /> Email
                 </label>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="es. pietro.devito"
-                  className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all"
-                />
+                <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="es. nome@esempio.com"
+                  className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all" />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] text-[#4a6a8a] font-medium flex items-center gap-1.5 px-1">
                   <Lock size={12} /> Password
                 </label>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimo 6 caratteri"
-                  className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all"
-                />
+                <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Minimo 6 caratteri"
+                  className="w-full bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm p-3 outline-none focus:border-[#534AB7]/60 focus:bg-[#534AB7]/5 transition-all" />
               </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] text-[#4a6a8a] font-medium flex items-center gap-1.5 px-1">
                   <Shield size={12} /> Ruolo
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setRole('Amministratore')}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all text-center space-y-1",
-                      role === 'Amministratore' ? "bg-[#534AB7]/20 border-[#534AB7]/60" : "bg-white/5 border-white/10 hover:border-white/20"
-                    )}
-                  >
+                  <button onClick={() => setRole('Amministratore')}
+                    className={cn("p-3 rounded-xl border transition-all text-center space-y-1",
+                      role === 'Amministratore' ? "bg-[#534AB7]/20 border-[#534AB7]/60" : "bg-white/5 border-white/10 hover:border-white/20")}>
                     <div className="text-lg">👑</div>
                     <div className="text-[10px] font-bold text-[#8ab0c8]">Admin</div>
                   </button>
-                  <button
-                    onClick={() => setRole('Contract Holder Collaborator (PSER)')}
-                    className={cn(
-                      "p-3 rounded-xl border transition-all text-center space-y-1",
-                      role === 'Contract Holder Collaborator (PSER)' ? "bg-[#534AB7]/20 border-[#534AB7]/60" : "bg-white/5 border-white/10 hover:border-white/20"
-                    )}
-                  >
+                  <button onClick={() => setRole('Contract Holder Collaborator (PSER)')}
+                    className={cn("p-3 rounded-xl border transition-all text-center space-y-1",
+                      role === 'Contract Holder Collaborator (PSER)' ? "bg-[#534AB7]/20 border-[#534AB7]/60" : "bg-white/5 border-white/10 hover:border-white/20")}>
                     <div className="text-lg">📋</div>
                     <div className="text-[10px] font-bold text-[#8ab0c8]">Collab</div>
                   </button>
                 </div>
               </div>
-              <button 
-                onClick={handleRegister}
-                className="w-full h-12 bg-gradient-to-r from-[#534AB7] to-[#6358cc] rounded-xl text-[#e8e6f8] text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:translate-y-[-2px] hover:shadow-[#534AB7]/40 transition-all active:translate-y-0"
-              >
+              <button onClick={handleRegister}
+                className="w-full h-12 bg-gradient-to-r from-[#534AB7] to-[#6358cc] rounded-xl text-[#e8e6f8] text-sm font-bold shadow-lg shadow-[#534AB7]/20 hover:translate-y-[-2px] hover:shadow-[#534AB7]/40 transition-all active:translate-y-0">
                 Registra Account
               </button>
             </div>
+            ) : (
+            <div className="text-center py-6 space-y-3">
+              <div className="text-3xl">🔐</div>
+              <p className="text-sm text-[#7a9ab8]">La gestione degli account è centralizzata.</p>
+              <p className="text-xs text-[#3a5a7a]">Contatta l'amministratore per l'accesso al sistema.</p>
+              <button onClick={() => setTab('login')} className="text-[#534AB7] text-sm font-semibold hover:underline">
+                Torna al login
+              </button>
+            </div>
+            )
           )}
 
           {tab === 'changepwd' && (

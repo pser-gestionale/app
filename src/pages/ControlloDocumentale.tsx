@@ -30,7 +30,7 @@ import {
   ShieldCheck,
   MessageSquare
 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn, fmtDate } from '../lib/utils';
 import { format, differenceInDays, addDays } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { DocumentoControllo } from '../types';
@@ -535,9 +535,11 @@ const ControlloDocumentale: React.FC = () => {
                       className="w-full h-10 bg-[#07101e] border border-white/10 rounded-xl text-[#c8ddf0] text-xs px-3 outline-none focus:border-[#534AB7]/60"
                     >
                       <option>Tutti i tipi</option>
-                      <option>DURC</option>
                       <option>Contrattuale</option>
+                      <option>Amministrativo</option>
                       <option>Sicurezza</option>
+                      <option>HSE</option>
+                      <option>Compliance</option>
                     </select>
                   </div>
                   <div className="space-y-1.5">
@@ -604,7 +606,7 @@ const ControlloDocumentale: React.FC = () => {
                             {d.esito}
                           </span>
                         </td>
-                        <td className="p-3 text-[11px] text-[#4a6a8a] font-mono">{d.scad}</td>
+                        <td className="p-3 text-[11px] text-[#4a6a8a] font-mono">{fmtDate(d.scad)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -816,21 +818,50 @@ const ControlloDocumentale: React.FC = () => {
                   className="w-full h-10 bg-[#0b1a2e] border border-white/10 rounded-xl text-[#c8ddf0] text-sm px-4 outline-none focus:border-[#534AB7]/60 transition-all cursor-pointer shadow-inner"
                 >
                   <optgroup label="Contrattuale" className="bg-[#0b1a2e]">
+                    <option>Verifica Subappalto</option>
                     <option>Modulo richiesta subappalto</option>
                     <option>Dichiarazione Compliance</option>
                     <option>Clausole contrattuali</option>
                     <option>Copia contratto subappalto</option>
-                    <option>Verifica Subappalto</option>
+                    <option>Allegati Contrattuali</option>
                   </optgroup>
                   <optgroup label="Amministrativo" className="bg-[#0b1a2e]">
                     <option>DURC</option>
+                    <option>Dichiarazione CCIAA</option>
                     <option>Certificato CCIAA</option>
                     <option>White List</option>
                     <option>Autocertificazione Pagamento Lavoratori</option>
+                    <option>Autodichiarazione Regolarità Retribitiva</option>
+                    <option>Antimafia</option>
+                    <option>Visura Camerale</option>
+                    <option>Protocollo NPA</option>
+                    <option>Protocollo di Legalità</option>
                   </optgroup>
                   <optgroup label="Sicurezza" className="bg-[#0b1a2e]">
                     <option>DUVRI / PSC / POS</option>
                     <option>Idoneità tecnico professionale</option>
+                    <option>Dichiarazione art 14 Dlgs 81</option>
+                    <option>DSAN</option>
+                  </optgroup>
+                  <optgroup label="HSE" className="bg-[#0b1a2e]">
+                    <option>Lista referenze</option>
+                    <option>Capacità organizzativa</option>
+                    <option>Formazione sicurezza</option>
+                    <option>DVR</option>
+                    <option>Indice infortuni</option>
+                    <option>ISO 9001</option>
+                    <option>ISO 14001</option>
+                    <option>Polizza RC</option>
+                    <option>SOA</option>
+                  </optgroup>
+                  <optgroup label="Compliance" className="bg-[#0b1a2e]">
+                    <option>Verifica rischio controparte</option>
+                    <option>Parti correlate</option>
+                    <option>Liste di riferimento</option>
+                    <option>Verifica Fonti Aperte</option>
+                  </optgroup>
+                  <optgroup label="Altro" className="bg-[#0b1a2e]">
+                    <option>Altro</option>
                   </optgroup>
                 </select>
               </div>
@@ -1223,7 +1254,7 @@ const ControlloDocumentale: React.FC = () => {
                   </div>
                   <div className="text-[10px] text-[#8ab0c8]">{d.app}</div>
                   <div className="flex justify-between items-center mt-1">
-                    <div className="text-[9px] text-[#4a6a8a] italic">Scadenza: {d.scad}</div>
+                    <div className="text-[9px] text-[#4a6a8a] italic">Scadenza: {fmtDate(d.scad)}</div>
                     <div className="text-[9px] font-bold text-[#E24B4A] uppercase tracking-tighter">{d.prio}</div>
                   </div>
                 </div>
@@ -1315,7 +1346,7 @@ const ControlloDocumentale: React.FC = () => {
                           {d.esito}
                         </span>
                       </td>
-                      <td className="p-4 text-xs text-[#4a6a8a] font-mono">{d.scad}</td>
+                      <td className="p-4 text-xs text-[#4a6a8a] font-mono">{fmtDate(d.scad)}</td>
                       <td className="p-4">
                         <div className="flex gap-0.5">
                           {[1,2,3,4,5].map(s => <Star key={s} size={10} className={cn(s <= (d.prio === 'Alta' ? 5 : d.prio === 'Media' ? 3 : 1) ? "fill-[#F5A800] text-[#F5A800]" : "text-white/10")} />)}
@@ -1552,7 +1583,7 @@ const ControlloDocumentale: React.FC = () => {
                               {d.esito}
                             </span>
                           </td>
-                          <td className="p-4 text-xs text-[#4a6a8a] font-mono">{d.scad}</td>
+                          <td className="p-4 text-xs text-[#4a6a8a] font-mono">{fmtDate(d.scad)}</td>
                         </tr>
                       ))}
                       {filteredArchivio.length === 0 && (
@@ -1679,7 +1710,7 @@ const ControlloDocumentale: React.FC = () => {
                           <tr key={i} className="hover:bg-white/2 transition-colors group cursor-pointer" onClick={() => prefillFromAlert(d)}>
                             <td className="p-4 text-xs font-bold text-[#ddeeff]">{d.doc}</td>
                             <td className="p-4 text-xs text-[#4a6a8a]">Sicurezza</td>
-                            <td className="p-4 text-xs text-[#8ab0c8] font-mono">{d.scad}</td>
+                            <td className="p-4 text-xs text-[#8ab0c8] font-mono">{fmtDate(d.scad)}</td>
                             <td className="p-4">
                               <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#E24B4A]/10 text-[#f09595] border border-[#E24B4A]/20">Scaduto</span>
                             </td>

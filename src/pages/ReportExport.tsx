@@ -18,6 +18,9 @@ const STATO_COL: Record<string, string> = {
   'Richiesta Informazioni': '#EF9F27', 'Conclusa': '#0F6E56',
 };
 
+const parseEuro = (val: string | undefined | null): number =>
+  parseFloat((val || '0').replace(/,/g, '')) || 0;
+
 const ReportExport: React.FC = () => {
   const { subaffidamenti, appaltatori, addActivity } = useData();
   const { user } = useAuth();
@@ -57,6 +60,19 @@ const ReportExport: React.FC = () => {
     });
   }, [subaffidamenti, selectedApp, tipoFilter, statoFilter, dal, al]);
 
+  const appaltatoreAgg = useMemo(() => {
+    const map = new Map<string, { totalCommitted: number; maxSub: number }>();
+    subaffidamenti.forEach(d => {
+      const key = (d.appaltatore || d.app || '').trim();
+      if (!key) return;
+      const committed = parseEuro(d.importoRichiestoEuro || d.importoEur);
+      const max = parseEuro(d.importoMassimoSubappaltabile || d.importoMaxSub);
+      const prev = map.get(key) || { totalCommitted: 0, maxSub: 0 };
+      map.set(key, { totalCommitted: prev.totalCommitted + committed, maxSub: Math.max(prev.maxSub, max) });
+    });
+    return map;
+  }, [subaffidamenti]);
+
   const COLUMNS = [
     { id: 'id',              label: 'ID Contratto' },
     { id: 'appaltatore',     label: 'Appaltatore' },
@@ -66,7 +82,9 @@ const ReportExport: React.FC = () => {
     { id: 'dataInizio',      label: 'Data Inizio' },
     { id: 'dataFine',        label: 'Data Fine' },
     { id: 'oggettoRichiesta',label: 'Oggetto Richiesta' },
-    { id: 'importoRichiestoEuro', label: 'Importo (€)' },
+    { id: 'importoRichiestoEuro',        label: 'Importo (€)' },
+    { id: 'importoMassimoSubappaltabile',label: 'Massimo Sub. (€)' },
+    { id: '__soglia__',      label: 'Soglia (%)' },
     { id: 'unitaGestore',    label: 'Unità Gestore' },
     { id: 'idSapContratto',  label: 'ID SAP Contratto' },
     { id: 'statoQualifica',  label: 'Stato Qualifica' },
@@ -128,6 +146,11 @@ const ReportExport: React.FC = () => {
       const df = d.scadenza || d.dataFine;
       const diff = df ? differenceInDays(new Date(df), today) : null;
       const color = diff === null ? '#666' : diff < 0 ? '#E24B4A' : diff <= 30 ? '#F5A800' : '#1D9E75';
+      const agg = appaltatoreAgg.get((d.appaltatore || d.app || '').trim());
+      const importoVal = parseEuro(d.importoRichiestoEuro || d.importoEur);
+      const massimoVal = agg?.maxSub || 0;
+      const sogliaPct = agg && agg.maxSub ? Math.min(100, Math.round((agg.totalCommitted / agg.maxSub) * 100)) : null;
+      const sogliaColor = sogliaPct === null ? '#999' : sogliaPct >= 70 ? '#E24B4A' : sogliaPct >= 40 ? '#F5A800' : '#1D9E75';
       return `<tr>
         <td>${d.id}</td>
         <td>${d.appaltatore || d.app || ''}</td>
@@ -136,19 +159,22 @@ const ReportExport: React.FC = () => {
         <td style="color:${STATO_COL[d.stato] || '#999'};font-weight:600">${d.stato}</td>
         <td>${df ? format(new Date(df), 'dd/MM/yyyy') : '—'}</td>
         <td style="color:${color};font-weight:600">${diff !== null ? (diff >= 0 ? '+' : '') + diff + 'gg' : '—'}</td>
+        <td>${importoVal ? '€ ' + importoVal.toLocaleString('it-IT') : '—'}</td>
+        <td>${massimoVal ? '€ ' + massimoVal.toLocaleString('it-IT') : '—'}</td>
+        <td style="color:${sogliaColor};font-weight:700">${sogliaPct !== null ? sogliaPct + '%' : '—'}</td>
       </tr>`;
     }).join('');
     w.document.write(`<html><head><title>${title}</title><style>
       body{font-family:sans-serif;padding:30px;color:#1a202c}
       h2{color:#534AB7;margin-bottom:20px}
-      table{width:100%;border-collapse:collapse;font-size:12px}
+      table{width:100%;border-collapse:collapse;font-size:11px}
       th{background:#0f172a;color:white;padding:10px 12px;text-align:left;font-size:10px;text-transform:uppercase}
       td{padding:10px 12px;border-bottom:1px solid #e2e8f0}
       tr:nth-child(even) td{background:#f8fafc}
       .footer{margin-top:30px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
     </style></head><body>
       <h2>📋 ${title}</h2>
-      <table><thead><tr><th>ID</th><th>Appaltatore</th><th>Subfornitore</th><th>Tipo</th><th>Stato</th><th>Scadenza</th><th>Giorni</th></tr></thead>
+      <table><thead><tr><th>ID</th><th>Appaltatore</th><th>Subfornitore</th><th>Tipo</th><th>Stato</th><th>Scadenza</th><th>Giorni</th><th>Importo (€)</th><th>Massimo Sub. (€)</th><th>Soglia %</th></tr></thead>
       <tbody>${rows}</tbody></table>
       <div class="footer">Generato il ${format(new Date(),'dd/MM/yyyy HH:mm')} — PSER Gestionale Subaffidamenti v2.0</div>
     </body></html>`);
@@ -290,10 +316,15 @@ const ReportExport: React.FC = () => {
         <div className="flex gap-2.5 flex-wrap items-center">
           <button onClick={() => {
             const rows = filteredData.map(d => {
+              const agg = appaltatoreAgg.get((d.appaltatore || d.app || '').trim());
               const out: any = {};
               selectedCols.forEach(col => {
                 const colDef = COLUMNS.find(c => c.id === col);
-                out[colDef?.label || col] = (d as any)[col] || (d as any)[col.replace('appaltatore','app').replace('subfornitore','sub')] || '';
+                if (col === '__soglia__') {
+                  out['Soglia (%)'] = agg && agg.maxSub ? Math.min(100, Math.round((agg.totalCommitted / agg.maxSub) * 100)) : '';
+                } else {
+                  out[colDef?.label || col] = (d as any)[col] || (d as any)[col.replace('appaltatore','app').replace('subfornitore','sub')] || '';
+                }
               });
               return out;
             });
@@ -323,13 +354,19 @@ const ReportExport: React.FC = () => {
                   <button onClick={() => {
                     const isApp = modalData[0]?.tot !== undefined;
                     if (isApp) exportCSV(modalData, modalTitle);
-                    else exportCSV(modalData.map(d => ({
-                      ID: d.id, Appaltatore: d.appaltatore || d.app,
-                      Subfornitore: d.subfornitore || d.sub,
-                      Tipo: d.tipo, Stato: d.stato,
-                      'Data Fine': d.dataFine || d.scadenza,
-                      'Importo (€)': d.importoRichiestoEuro || d.importoEur,
-                    })), modalTitle);
+                    else exportCSV(modalData.map(d => {
+                      const agg = appaltatoreAgg.get((d.appaltatore || d.app || '').trim());
+                      const sogliaPct = agg && agg.maxSub ? Math.min(100, Math.round((agg.totalCommitted / agg.maxSub) * 100)) : null;
+                      return {
+                        ID: d.id, Appaltatore: d.appaltatore || d.app,
+                        Subfornitore: d.subfornitore || d.sub,
+                        Tipo: d.tipo, Stato: d.stato,
+                        'Data Fine': d.dataFine || d.scadenza,
+                        'Importo (€)': parseEuro(d.importoRichiestoEuro || d.importoEur) || '',
+                        'Massimo Subapp. (€)': agg?.maxSub || '',
+                        'Soglia (%)': sogliaPct !== null ? sogliaPct : '',
+                      };
+                    }), modalTitle);
                   }} className="h-8 px-3 bg-[#1D9E75]/15 border border-[#1D9E75]/35 rounded-lg text-[#5DCAA5] text-[11px] font-bold hover:bg-[#1D9E75]/25 flex items-center gap-1.5">
                     <Download size={12}/> CSV
                   </button>

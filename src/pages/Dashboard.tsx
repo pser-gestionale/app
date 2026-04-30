@@ -39,7 +39,8 @@ import {
   ShieldCheck,
   Zap,
   GanttChartSquare,
-  FileUp
+  FileUp,
+  Eye
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -53,11 +54,14 @@ import {
   Bar,
   Cell
 } from 'recharts';
-import { cn } from '../lib/utils';
+import { cn, fmtDate } from '../lib/utils';
 import { format, differenceInDays, isAfter, isBefore, addDays, startOfDay } from 'date-fns';
 import { it } from 'date-fns/locale';
 import * as XLSX from 'xlsx';
 import { Subaffidamento } from '../types';
+
+const parseEuro = (val: string | undefined | null): number =>
+  parseFloat((val || '0').replace(/,/g, '')) || 0;
 
 const isValidDate = (d: any) => {
   if (!d) return false;
@@ -92,7 +96,7 @@ const highlightMatch = (text: string, query: string) => {
 };
 
 const Dashboard: React.FC = () => {
-  const { subaffidamenti, appaltatori, documenti, settings, addActivity, setSubaffidamenti } = useData();
+  const { subaffidamenti, appaltatori, documenti, followUps, activityLog, settings, addActivity, setSubaffidamenti } = useData();
   const { user, logout } = useAuth();
   
   const [appSearch, setAppSearch] = useState('');
@@ -102,7 +106,6 @@ const Dashboard: React.FC = () => {
   const [tipoFilter, setTipoFilter] = useState<string>('');
   const [statoFilter, setStatoFilter] = useState<string>('');
   const [criticiRange, setCriticiRange] = useState<30 | 60>(60);
-  const [currentTableMode, setCurrentTableMode] = useState<'critici' | 'all' | 'subappalto' | 'subcontratto' | 'attivi' | 'docs'>('all');
 
   // Modals state
   const [showTuttiModal, setShowTuttiModal] = useState(false);
@@ -116,6 +119,10 @@ const Dashboard: React.FC = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showAllBarChart, setShowAllBarChart] = useState(false);
   const [showGantt, setShowGantt] = useState(false);
+  const [showPendenzeModal, setShowPendenzeModal] = useState(false);
+  const [showTableModal, setShowTableModal]       = useState(false);
+  const [sortCol, setSortCol]                     = useState<string>('');
+  const [sortDir, setSortDir]                     = useState<'asc' | 'desc'>('asc');
   const [isDragging, setIsDragging] = useState(false);
   const [hoveredStato, setHoveredStato] = useState<string | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
@@ -146,6 +153,25 @@ const Dashboard: React.FC = () => {
 
   // Detail Panel
   const [selectedDetail, setSelectedDetail] = useState<any | null>(null);
+  const [selectedPendenza, setSelectedPendenza] = useState<any | null>(null);
+
+  // Soglie modal
+  const [selectedSoglia, setSelectedSoglia] = useState<any | null>(null);
+
+  // Trend window + chart ref
+  const [trendWindow, setTrendWindow] = useState<'3M' | '6M' | '1A' | 'ALL'>('1A');
+  const trendChartRef1 = useRef<HTMLDivElement>(null);
+  const trendChartRef2 = useRef<HTMLDivElement>(null);
+
+  // Worklist
+  const [worklistTab, setWorklistTab]           = useState<'Tutti' | 'Autorizzate' | 'Inviate' | 'Scadute' | 'Richiesta info' | 'Attivate' | 'Archivio'>('Tutti');
+  const [worklistAppSearch, setWorklistAppSearch] = useState('');
+  const [worklistIdSearch, setWorklistIdSearch]   = useState('');
+  const [worklistTipo, setWorklistTipo]           = useState('');
+  const [worklistStato, setWorklistStato]         = useState('');
+  const [worklistDensity, setWorklistDensity]     = useState<'compact' | 'normal' | 'large'>('normal');
+  const [worklistDots, setWorklistDots]           = useState<string | null>(null);
+  const [quickEdit, setQuickEdit]                 = useState<{ id: string; stato: string } | null>(null);
 
   const today = new Date();
 
@@ -230,24 +256,6 @@ const Dashboard: React.FC = () => {
       return timeB - timeA;
     }).slice(0, 5);
   }, [subaffidamenti, selectedApp]);
-
-  const kpiFilteredData = useMemo(() => {
-    const base = filteredData;
-    switch (currentTableMode) {
-      case 'all': return base;
-      case 'subappalto': return base.filter(d => d.tipo === 'Subappalto');
-      case 'subcontratto': return base.filter(d => d.tipo === 'Subcontratto');
-      case 'attivi': return base.filter(d => d.stato === 'Autorizzata' || d.stato === 'Attivata');
-      case 'critici':
-      default:
-        return base.filter(d => {
-          const isRigettata = d.stato === 'Rigettata';
-          const isScaduta = d.stato === 'Scaduta';
-          const isNearScadenza = d.scadenza && isValidDate(d.scadenza) && safeDiff(d.scadenza, today) <= criticiRange;
-          return isRigettata || isScaduta || isNearScadenza;
-        });
-    }
-  }, [filteredData, currentTableMode, today, criticiRange]);
 
   const virtuousApps = useMemo(() => {
     return (Array.from(new Set(subaffidamenti.map(d => d.appaltatore || d.app))) as string[]).filter(app => {
@@ -342,35 +350,254 @@ const Dashboard: React.FC = () => {
 
   const predictiveAlerts = useMemo(() => {
     return subaffidamenti.filter(d => {
-      const max = parseFloat(d.importoMaxSub || '0');
-      const cur = parseFloat(d.importoEur || '0');
+      const max = parseEuro(d.importoMaxSub);
+      const cur = parseEuro(d.importoEur);
       if (max <= 0) return false;
       const pct = (cur / max) * 100;
       return pct >= 50;
     }).map(d => {
-      const max = parseFloat(d.importoMaxSub || '0');
-      const cur = parseFloat(d.importoEur || '0');
+      const max = parseEuro(d.importoMaxSub);
+      const cur = parseEuro(d.importoEur);
       const pct = (cur / max) * 100;
       return { ...d, pct };
     }).sort((a, b) => b.pct - a.pct);
   }, [subaffidamenti]);
 
+  /* ── pendenze documentali ───────────────────────────────── */
+  const STATI_ESCLUSI_PENDENZE = ['Rigettata', 'Scaduta', 'Chiusa', 'Annullata'];
+  const pendenze = useMemo(() => {
+    const praticheValidate = new Set(
+      followUps.filter(f => f.stato === 'validato').map(f => f.praticaId)
+    );
+    return subaffidamenti
+      .filter(s =>
+        s.allegatiScaduti === true &&
+        !STATI_ESCLUSI_PENDENZE.includes(s.stato) &&
+        !praticheValidate.has(s.id)
+      )
+      .map(s => {
+        const sap = s.idSapContratto || s.idSap || '';
+        const docsForPratica = sap ? documenti.filter(d => d.sap === sap) : [];
+        const critici = docsForPratica.filter(d => {
+          const scaduta = d.scad && isValidDate(d.scad) && safeDiff(d.scad, today) <= 0;
+          const nonConf = ['Non Conforme', 'Richiesta Informazioni', 'Scaduto'].includes(d.esito);
+          return scaduta || nonConf;
+        });
+        return { ...s, _docsTotal: docsForPratica.length, _docsCritici: critici, _criticiCount: critici.length };
+      })
+      .sort((a, b) => b._criticiCount - a._criticiCount);
+  }, [subaffidamenti, documenti, followUps, today]);
+
+  const CC_PEND = 'rosalinda.difiore@ren.eniplenitude.com,federica.damato@ren.eniplenitude.com,antoninoangelo.polito@ren.eniplenitude.com';
+  const openPendenzaEmail = (client: 'gmail' | 'outlook', p: typeof pendenze[0]) => {
+    const app = p.appaltatore || p.app || '';
+    const docsText = p._docsCritici.length > 0
+      ? p._docsCritici.map((d: any) => `  • ${d.doc}: ${d.esito}`).join('\n')
+      : '  • Allegati Contrattuali: Scaduto';
+    const subject = `Richiesta aggiornamento documenti — ${app}`;
+    const body = `Gentile ${app},\n\nin riferimento al contratto ${p.idSapContratto || p.idSap || p.id}, si segnalano i seguenti documenti non conformi che necessitano di aggiornamento:\n\n${docsText}\n\nSi prega di provvedere all'aggiornamento della documentazione entro i termini contrattualmente previsti, caricando i file aggiornati sul portale aziendale.\n\nPer qualsiasi chiarimento siamo a disposizione.\n\nCordiali saluti,\nPietro De Vito\nPSER — Gestione Subaffidamenti`;
+    if (client === 'gmail') window.open(`https://mail.google.com/mail/?view=cm&cc=${encodeURIComponent(CC_PEND)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+    else window.open(`https://outlook.office.com/mail/deeplink/compose?cc=${encodeURIComponent(CC_PEND)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+  };
+
+  const addCalendarEventDash = (title: string, notes: string, color: string, label: string) => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const now = new Date();
+    const startTime = format(now, 'HH:mm');
+    const endTime = format(new Date(now.getTime() + 30 * 60000), 'HH:mm');
+    const event = { id: Date.now().toString(), title, startDate: todayStr, endDate: todayStr, startTime, endTime, notes, label, color, createdBy: user?.nome || 'Sistema', createdAt: now.toISOString() };
+    const saved = localStorage.getItem('pser_custom_events');
+    const events: any[] = saved ? JSON.parse(saved) : [];
+    localStorage.setItem('pser_custom_events', JSON.stringify([...events, event]));
+  };
+
+  const handleSollecitaPendenza = (p: typeof pendenze[0]) => {
+    openPendenzaEmail('outlook', p);
+    addCalendarEventDash(
+      `Sollecito inviato: ${p.appaltatore || p.app}`,
+      `SAP: ${p.idSapContratto || p.idSap || p.id} | Doc critici: ${p._criticiCount}`,
+      '#0078D4',
+      'Sollecito Outlook'
+    );
+    navigate('/storico', { state: { praticaId: p.id } });
+    setShowPendenzeModal(false);
+  };
+
+  const handleExportPendenzeExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(pendenze.map(p => ({
+      'ID Pratica': p.id,
+      'Appaltatore': p.appaltatore || p.app,
+      'Subfornitore': p.subfornitore || p.sub || '',
+      'SAP Contratto': p.idSapContratto || p.idSap || '',
+      'Stato': p.stato,
+      'Doc Critici N.': p._criticiCount,
+      'Documenti Critici': p._docsCritici.map((d: any) => `${d.doc}: ${d.esito}`).join(' | '),
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Pendenze');
+    XLSX.writeFile(wb, `Pendenze_Documentali_${format(new Date(), 'yyyyMMdd')}.xlsx`);
+  };
+
+  const handleExportPendenzePDF = () => {
+    const win = window.open('', '_blank');
+    if (!win) return;
+    const rows = pendenze.map(p => `
+      <tr>
+        <td>${p.id}</td>
+        <td>${p.appaltatore || p.app}</td>
+        <td>${p.subfornitore || p.sub || '—'}</td>
+        <td>${p.idSapContratto || p.idSap || '—'}</td>
+        <td>${p.stato}</td>
+        <td>${p._criticiCount}</td>
+        <td style="font-size:10px">${p._docsCritici.map((d: any) => `${d.doc}: ${d.esito}`).join('<br>')}</td>
+      </tr>`).join('');
+    win.document.write(`<html><head><title>Pendenze Documentali</title><style>
+      body{font-family:Inter,sans-serif;padding:40px;color:#1a202c}
+      h2{color:#E24B4A;margin-bottom:4px}p{color:#64748b;font-size:12px;margin-top:0}
+      table{width:100%;border-collapse:collapse;margin-top:20px}
+      th{background:#0f172a;color:#fff;text-align:left;padding:10px 12px;font-size:10px;text-transform:uppercase;letter-spacing:.05em}
+      td{padding:10px 12px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#4a5568;vertical-align:top}
+      tr:nth-child(even){background:#f8fafc}
+      .footer{margin-top:30px;font-size:10px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
+    </style></head><body>
+      <h2>⚠ Pendenze Documentali</h2>
+      <p>${pendenze.length} pratiche con allegati scaduti — esportato il ${format(new Date(), 'dd/MM/yyyy HH:mm')}</p>
+      <table><thead><tr>
+        <th>ID</th><th>Appaltatore</th><th>Subfornitore</th><th>SAP</th><th>Stato</th><th>N. Critici</th><th>Documenti Critici</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+      <div class="footer">PSER — Gestione Subaffidamenti · Pietro De Vito</div>
+    </body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 400);
+  };
+
+  const handleSetRI = (id: string) => {
+    setSubaffidamenti(prev => prev.map(s => s.id === id ? { ...s, stato: 'Richiesta Informazioni' } : s));
+    addActivity('update', 'Dashboard', 'Stato aggiornato a Richiesta Informazioni', `Pratica ${id}`);
+  };
+
+  const handleExportChartPNG = (ref: React.RefObject<HTMLDivElement | null>) => {
+    const container = ref.current;
+    if (!container) return;
+    const svg = container.querySelector('svg');
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement('canvas');
+    const rect = svg.getBoundingClientRect();
+    canvas.width  = rect.width  || 800;
+    canvas.height = rect.height || 300;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#0f2035';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const img = new Image();
+    const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+    const url  = URL.createObjectURL(blob);
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      const a = document.createElement('a');
+      a.download = `trend_subappalti_${format(new Date(), 'yyyy-MM-dd')}.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    };
+    img.src = url;
+  };
+
   const cumulativeData = useMemo(() => {
-    // Group by month of insertion
-    const monthly: Record<string, { name: string, sub: number, budget: number }> = {};
-    
+    type MonthEntry = { key: string; name: string; sub: number; budget: number };
+    const monthly: Record<string, MonthEntry> = {};
+
     subaffidamenti.forEach(d => {
-      if (!d.inserito) return;
-      const date = new Date(d.inserito);
+      const raw = d.inserito || d.dataCreazione;
+      if (!raw) return;
+      const date = new Date(raw);
       if (isNaN(date.getTime())) return;
-      const key = format(date, 'MMM yy', { locale: it });
-      if (!monthly[key]) monthly[key] = { name: key, sub: 0, budget: 0 };
-      monthly[key].sub += parseFloat(d.importoEur || '0');
-      monthly[key].budget += parseFloat(d.importoMaxSub || '0') / 10; // Normalized for chart
+      const key = format(date, 'yyyy-MM');
+      const name = format(date, 'MMM yy', { locale: it });
+      if (!monthly[key]) monthly[key] = { key, name, sub: 0, budget: 0 };
+      monthly[key].sub    += parseEuro(d.importoEur || d.importoRichiestoEuro);
+      monthly[key].budget += parseEuro(d.importoMaxSub || d.importoMassimoSubappaltabile);
     });
 
-    return Object.values(monthly).slice(-6);
+    const sorted = Object.values(monthly).sort((a, b) => a.key.localeCompare(b.key));
+
+    // Running cumulative sums
+    let cumSub = 0;
+    let cumBudget = 0;
+    const cumulative = sorted.map(m => {
+      cumSub    += m.sub;
+      cumBudget += m.budget;
+      return { name: m.name, sub: Math.round(cumSub / 1000), budget: Math.round(cumBudget / 1000) };
+    });
+
+    // Filter by trendWindow
+    const windowMap: Record<string, number> = { '3M': 3, '6M': 6, '1A': 12, 'ALL': 9999 };
+    const months = windowMap[trendWindow] ?? 12;
+    return cumulative.slice(-months);
+  }, [subaffidamenti, trendWindow]);
+
+  const ARCHIVIO_STATI = ['Rigettata', 'Scaduta', 'Chiusa', 'Annullata'];
+
+  // Aggregazione soglia per appaltatore: somma importi richiesti vs massimo subappaltabile
+  const appaltatoreAgg = useMemo(() => {
+    const map = new Map<string, { totalCommitted: number; maxSub: number }>();
+    subaffidamenti.forEach(d => {
+      const key = (d.appaltatore || d.app || '').trim();
+      if (!key) return;
+      const committed = parseEuro(d.importoRichiestoEuro || d.importoEur);
+      const max       = parseEuro(d.importoMassimoSubappaltabile || d.importoMaxSub);
+      const prev = map.get(key) || { totalCommitted: 0, maxSub: 0 };
+      map.set(key, {
+        totalCommitted: prev.totalCommitted + committed,
+        maxSub: Math.max(prev.maxSub, max), // prende il massimo tra le righe (stesso tetto contrattuale)
+      });
+    });
+    return map;
   }, [subaffidamenti]);
+
+  const worklistCounts = useMemo(() => ({
+    Tutti:           subaffidamenti.filter(d => !ARCHIVIO_STATI.includes(d.stato)).length,
+    Autorizzate:     subaffidamenti.filter(d => d.stato === 'Autorizzata').length,
+    Inviate:         subaffidamenti.filter(d => d.stato === 'Inviata').length,
+    Scadute:         subaffidamenti.filter(d => d.stato === 'Scaduta').length,
+    'Richiesta info': subaffidamenti.filter(d => d.stato === 'Richiesta Informazioni').length,
+    Attivate:        subaffidamenti.filter(d => d.stato === 'Attivata').length,
+    Archivio:        subaffidamenti.filter(d => ARCHIVIO_STATI.includes(d.stato)).length,
+  }), [subaffidamenti]);
+
+  const worklistData = useMemo(() => {
+    const tabStatoMap: Record<string, string[]> = {
+      'Autorizzate':     ['Autorizzata'],
+      'Inviate':         ['Inviata'],
+      'Scadute':         ['Scaduta'],
+      'Richiesta info':  ['Richiesta Informazioni'],
+      'Attivate':        ['Attivata'],
+      'Archivio':        ARCHIVIO_STATI,
+    };
+    let data = worklistTab === 'Tutti'
+      ? subaffidamenti.filter(d => !ARCHIVIO_STATI.includes(d.stato))
+      : worklistTab === 'Archivio'
+        ? subaffidamenti.filter(d => ARCHIVIO_STATI.includes(d.stato))
+        : subaffidamenti.filter(d => (tabStatoMap[worklistTab] || []).includes(d.stato));
+
+    if (worklistAppSearch) data = data.filter(d => (d.appaltatore || d.app || '').toLowerCase().includes(worklistAppSearch.toLowerCase()));
+    if (worklistIdSearch)  data = data.filter(d => d.id.toLowerCase().includes(worklistIdSearch.toLowerCase()));
+    if (worklistTipo)      data = data.filter(d => d.tipo === worklistTipo);
+    if (worklistStato)     data = data.filter(d => d.stato === worklistStato);
+    // Ordina per data creazione decrescente (più recente prima)
+    // Gestisce sia mm/dd/yyyy (sito aziendale) che yyyy-MM-dd
+    const parseCreazione = (s: string | undefined) => {
+      if (!s) return 0;
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+        const [mm, dd, yyyy] = s.split('/');
+        return new Date(`${yyyy}-${mm}-${dd}`).getTime();
+      }
+      return new Date(s).getTime() || 0;
+    };
+    return [...data].sort((a, b) => parseCreazione(b.dataCreazione || b.inserito) - parseCreazione(a.dataCreazione || a.inserito));
+  }, [subaffidamenti, worklistTab, worklistAppSearch, worklistIdSearch, worklistTipo, worklistStato]);
 
   const complianceHealth = useMemo(() => {
     const tot = documenti.length;
@@ -476,67 +703,34 @@ const Dashboard: React.FC = () => {
 
   const economicStats = useMemo(() => {
     if (!selectedDetail || selectedDetail._type === 'doc') return null;
-    const valContratto = parseFloat(selectedDetail.importoMaxSub || '0') || 1000; // Fallback for demo
-    const valSub = parseFloat(selectedDetail.importoEur || '0') || 500; // Fallback for demo
+    const valContratto = parseEuro(selectedDetail.importoMaxSub) || 1000; // Fallback for demo
+    const valSub = parseEuro(selectedDetail.importoEur) || 500; // Fallback for demo
     const soglia = valContratto > 0 ? (valSub / valContratto) * 100 : 0;
     const residuo = Math.max(0, 100 - soglia);
     return { valContratto, valSub, soglia, residuo };
   }, [selectedDetail]);
-  const tableData = useMemo(() => {
-    if (currentTableMode === 'docs') {
-      return selectedApp ? documenti.filter(d => (d.appaltatore || d.app) === selectedApp) : documenti;
-    }
-    if (tipoFilter || statoFilter) {
-      return [...filteredData].sort((a, b) => {
-        const timeA = isValidDate(a.scadenza) ? new Date(a.scadenza).getTime() : 0;
-        const timeB = isValidDate(b.scadenza) ? new Date(b.scadenza).getTime() : 0;
-        return timeA - timeB;
-      });
-    }
-    return kpiFilteredData;
-  }, [filteredData, kpiFilteredData, tipoFilter, statoFilter, currentTableMode, documenti, selectedApp]);
-
-  const tableTitle = useMemo(() => {
-    if (currentTableMode === 'docs') return '📋 Controlli Documentali';
-    if (tipoFilter || statoFilter) return `📋 ${tipoFilter || 'Tutti'} ${statoFilter ? ' — ' + statoFilter : ''}`;
-    switch (currentTableMode) {
-      case 'all': return '📋 Tutti i Subaffidamenti';
-      case 'subappalto': return '📋 Subappalti';
-      case 'subcontratto': return '📋 Subcontratti';
-      case 'attivi': return '📋 Contratti Attivi & Autorizzati';
-      case 'critici': return '📋 Contratti Critici e Risultati Attivi';
-      default: return '📋 Risultati';
-    }
-  }, [currentTableMode, tipoFilter, statoFilter]);
 
   const navigate = useNavigate();
+  const worklistRef = useRef<HTMLDivElement>(null);
 
   const handleKpiClick = (mode: 'all' | 'subappalto' | 'subcontratto' | 'critici' | 'attivi' | 'docs') => {
-    setCurrentTableMode(mode);
-    setStatoFilter('');
-    setTipoFilter('');
-    const tableEl = document.getElementById('main-table-card');
-    if (tableEl) tableEl.scrollIntoView({ behavior: 'smooth' });
+    setWorklistAppSearch('');
+    setWorklistIdSearch('');
+    setWorklistStato('');
+    if (mode === 'docs') {
+      navigate('/storico');
+      return;
+    }
+    if (mode === 'subappalto') { setWorklistTipo('Subappalto'); setWorklistTab('Tutti'); }
+    else if (mode === 'subcontratto') { setWorklistTipo('Subcontratto'); setWorklistTab('Tutti'); }
+    else if (mode === 'attivi') { setWorklistTipo(''); setWorklistTab('Autorizzate'); }
+    else if (mode === 'critici') { setWorklistTipo(''); setWorklistTab('Scadute'); }
+    else { setWorklistTipo(''); setWorklistTab('Tutti'); }
+    setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   };
 
   const handleRowClick = (record: any) => {
     setSelectedDetail(record);
-    // Reset filters to ensure the donut chart shows only the selected practice
-    setStatoFilter('');
-    setTipoFilter('');
-    setCurrentTableMode('all');
-    
-    setShowTuttiModal(false);
-    setShowUltimiModal(false);
-    setShowCriticiModal(false);
-    setShowArchivioModal(false);
-    setShowCalendarModal(false);
-    setShowEmailModal(false);
-    // Reset modal filters
-    setModalAppSearch('');
-    setModalTipoFilter('');
-    setModalStatoFilter('');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleSaveEvent = () => {
@@ -623,51 +817,103 @@ const Dashboard: React.FC = () => {
   };
 
   const handleExportExcel = (data: any[]) => {
-    const isDoc = currentTableMode === 'docs';
-    const worksheet = XLSX.utils.json_to_sheet(data.map(d => {
-      if (isDoc) {
-        return {
-          SAP: d.sap,
-          Appaltatore: d.app,
-          Documento: d.doc,
-          Responsabile: d.responsabile || d.utente,
-          Esito: d.esito,
-          Scadenza: d.scad,
-          Inserito: d.inserito
-        };
-      }
-      return {
-        ID: d.id,
-        Appaltatore: d.appaltatore || d.app,
-        Subfornitore: d.subfornitore || d.sub,
-        Tipo: d.tipo,
-        Stato: d.stato,
-        Inizio: d.inizio,
-        Scadenza: d.scadenza,
-        Oggetto: d.oggetto,
-        Importo: d.importoEur
-      };
-    }));
+    const worksheet = XLSX.utils.json_to_sheet(data.map((d: any) => ({
+      ID: d.id,
+      Appaltatore: d.appaltatore || d.app,
+      Subfornitore: d.subfornitore || d.sub,
+      Tipo: d.tipo,
+      Stato: d.stato,
+      Inizio: d.inizio,
+      Scadenza: d.scadenza,
+      Oggetto: d.oggetto,
+      Importo: d.importoEur
+    })));
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, isDoc ? "Documenti" : "Subaffidamenti");
-    XLSX.writeFile(workbook, `Export_${isDoc ? 'Documenti' : 'Subaffidamenti'}_${format(new Date(), 'yyyyMMdd')}.xlsx`);
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Subaffidamenti');
+    XLSX.writeFile(workbook, `Export_Subaffidamenti_${format(new Date(), 'yyyyMMdd')}.xlsx`);
+  };
+
+  const handleGeneraReportBulk = (title: string, data: Subaffidamento[]) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    const cards = data.map((d, idx) => {
+      const sap = d.idSapContratto || d.idSap || '';
+      const docsLine = documenti
+        .filter(doc => doc.sap === sap || doc.app === (d.appaltatore || d.app))
+        .map(doc => `${doc.doc}: ${doc.esito} — scad. ${doc.scad || '—'}`)
+        .join('\n');
+      const importoVal = d.importoRichiestoEuro || d.importoEur
+        ? `€ ${parseEuro(d.importoRichiestoEuro || d.importoEur).toLocaleString('it-IT')}`
+        : '—';
+      return `
+        <div class="card${idx < data.length - 1 ? ' break' : ''}">
+          <h2>Report Pratica ${d.id} — ${d.appaltatore || d.app || '—'}</h2>
+          <div class="grid">
+            <div class="cell"><div class="lbl">Subfornitore</div><div class="val">${d.subfornitore || d.sub || '—'}</div></div>
+            <div class="cell"><div class="lbl">Tipo</div><div class="val">${d.tipo || '—'}</div></div>
+            <div class="cell"><div class="lbl">Stato</div><div class="val">${d.stato || '—'}</div></div>
+            <div class="cell"><div class="lbl">Scadenza</div><div class="val">${safeFormat(d.scadenza, 'dd/MM/yyyy')}</div></div>
+            <div class="cell"><div class="lbl">SAP Contratto</div><div class="val">${sap || '—'}</div></div>
+            <div class="cell"><div class="lbl">Importo</div><div class="val">${importoVal}</div></div>
+          </div>
+          ${docsLine ? `<div class="lbl" style="margin-bottom:6px">Documenti</div><pre>${docsLine}</pre>` : ''}
+        </div>`;
+    }).join('');
+
+    printWindow.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+      <title>${title}</title>
+      <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Segoe UI',sans-serif;font-size:11px;color:#1a2a3a;padding:24px;background:#fff}
+        .report-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;padding-bottom:12px;border-bottom:3px solid #534AB7}
+        .report-header h1{font-size:18px;font-weight:700;color:#0f172a}
+        .report-header span{font-size:10px;color:#6a8aaa;background:#f1f5f9;border-radius:20px;padding:4px 12px}
+        .card{margin-bottom:28px;padding:20px;border:1px solid #e2e8f0;border-radius:10px}
+        .card h2{font-size:14px;font-weight:700;border-bottom:2px solid #534AB7;padding-bottom:8px;margin-bottom:14px;color:#0f172a}
+        .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+        .cell{border:1px solid #e8edf3;border-radius:6px;padding:8px 12px}
+        .lbl{font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:#6a8aaa;font-weight:700;margin-bottom:2px}
+        .val{font-size:11px;font-weight:600;color:#1a2a3a}
+        pre{background:#f7f9fc;border:1px solid #e8edf3;border-radius:6px;padding:10px;font-size:10px;white-space:pre-wrap;color:#2a4a6a}
+        .break{page-break-after:always}
+        .footer{margin-top:32px;font-size:9px;color:#9ab0c8;border-top:1px solid #e2e8f0;padding-top:10px}
+        @page{margin:15mm;size:A4}
+      </style>
+    </head><body>
+      <div class="report-header">
+        <h1>📋 ${title}</h1>
+        <span>${data.length} pratiche — Generato il ${format(new Date(), 'dd/MM/yyyy HH:mm')}</span>
+      </div>
+      ${cards}
+      <div class="footer">PSER Gestionale Subaffidamenti — Documento riservato</div>
+      <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close()}<\/script>
+    </body></html>`);
+    printWindow.document.close();
   };
 
   const handleExportPDF = (title: string, data: any[]) => {
     const printWindow = window.open('', '_blank');
     if (printWindow) {
-      const isDoc = currentTableMode === 'docs';
-      const tableRows = data.map(d => `
+      const tableRows = data.map((d: any) => {
+        const agg = appaltatoreAgg.get((d.appaltatore || d.app || '').trim());
+        const importoVal = parseEuro(d.importoEur || d.importoRichiestoEuro);
+        const massimoVal = agg?.maxSub || 0;
+        const sogliaPct  = agg && agg.maxSub ? Math.min(100, Math.round((agg.totalCommitted / agg.maxSub) * 100)) : null;
+        const sogliaColor = sogliaPct === null ? '#999' : sogliaPct >= 70 ? '#E24B4A' : sogliaPct >= 40 ? '#F5A800' : '#1D9E75';
+        return `
         <tr>
-          <td>${isDoc ? d.sap : d.id}</td>
+          <td>${d.id}</td>
           <td>${d.appaltatore || d.app}</td>
-          <td>${isDoc ? d.doc : d.sub}</td>
-          <td>${isDoc ? (d.responsabile || d.utente) : d.tipo}</td>
-          <td>${isDoc ? d.esito : d.stato}</td>
-          <td>${(isDoc ? d.scad : d.scadenza) || '—'}</td>
-          <td>${(isDoc ? d.scad : d.scadenza) ? safeDiff(isDoc ? d.scad : d.scadenza, today) : '—'}</td>
-        </tr>
-      `).join('');
+          <td>${d.subfornitore || d.sub || '—'}</td>
+          <td>${d.tipo}</td>
+          <td>${d.stato}</td>
+          <td>${d.scadenza || '—'}</td>
+          <td>${d.scadenza ? safeDiff(d.scadenza, today) : '—'}</td>
+          <td>${importoVal ? '€ ' + importoVal.toLocaleString('it-IT') : '—'}</td>
+          <td>${massimoVal ? '€ ' + massimoVal.toLocaleString('it-IT') : '—'}</td>
+          <td style="color:${sogliaColor};font-weight:700">${sogliaPct !== null ? sogliaPct + '%' : '—'}</td>
+        </tr>`;
+      }).join('');
 
       printWindow.document.write(`
         <html>
@@ -684,28 +930,25 @@ const Dashboard: React.FC = () => {
             </style>
           </head>
           <body>
-            <div class="header">
-              <span>📋</span> ${title}
-            </div>
+            <div class="header"><span>📋</span> ${title}</div>
             <table>
               <thead>
                 <tr>
-                  <th>${isDoc ? 'SAP' : 'ID Contratto'}</th>
+                  <th>ID Contratto</th>
                   <th>Appaltatore</th>
-                  <th>${isDoc ? 'Documento' : 'Subfornitore'}</th>
-                  <th>${isDoc ? 'Responsabile' : 'Tipo'}</th>
-                  <th>${isDoc ? 'Esito' : 'Stato'}</th>
+                  <th>Subfornitore</th>
+                  <th>Tipo</th>
+                  <th>Stato</th>
                   <th>Scadenza</th>
                   <th>Giorni</th>
+                  <th>Importo (€)</th>
+                  <th>Massimo Sub. (€)</th>
+                  <th>Soglia %</th>
                 </tr>
               </thead>
-              <tbody>
-                ${tableRows}
-              </tbody>
+              <tbody>${tableRows}</tbody>
             </table>
-            <div class="footer">
-              Generato il ${format(new Date(), 'dd/MM/yyyy')} — PSER Gestionale Subaffidamenti v2.0
-            </div>
+            <div class="footer">Generato il ${format(new Date(), 'dd/MM/yyyy')} — PSER Gestionale Subaffidamenti v2.0</div>
           </body>
         </html>
       `);
@@ -973,9 +1216,9 @@ const Dashboard: React.FC = () => {
         if (ce.startDate === dateStr) {
           dayEvents.push({
             tipo: 'custom',
-            label: 'Evento',
+            label: ce.label || 'Evento',
             nome: ce.title,
-            color: '#F5A800' // Yellow
+            color: ce.color || '#F5A800'
           });
         }
       });
@@ -1002,9 +1245,9 @@ const Dashboard: React.FC = () => {
         all.push({
           date: ce.startDate,
           tipo: 'custom',
-          label: 'Evento',
+          label: ce.label || 'Evento',
           nome: ce.title,
-          color: '#F5A800'
+          color: ce.color || '#F5A800'
         });
       }
     });
@@ -1030,9 +1273,9 @@ const Dashboard: React.FC = () => {
           id: ce.id,
           date: ce.startDate,
           tipo: 'custom',
-          label: 'Evento',
+          label: ce.label || 'Evento',
           nome: ce.title,
-          color: '#F5A800',
+          color: ce.color || '#F5A800',
           raw: ce
         });
       }
@@ -1279,36 +1522,57 @@ const Dashboard: React.FC = () => {
 
         {/* CUMULATIVE CHART */}
         <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 space-y-3 shadow-xl">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-widest flex items-center gap-2">
-              <Activity size={14} className="text-[#378ADD]" /> Trend Cumulativo Subappalti
+              <Activity size={14} className="text-[#534AB7]" /> Trend Cumulativo Subappalti
             </h3>
-            <div className="flex gap-2">
-              <div className="flex items-center gap-1 text-[8px] text-[#3a5a7a] uppercase font-bold">
-                <div className="w-2 h-2 rounded-full bg-[#378ADD]" /> Sub
-              </div>
-              <div className="flex items-center gap-1 text-[8px] text-[#3a5a7a] uppercase font-bold">
-                <div className="w-2 h-2 rounded-full bg-[#534AB7]" /> Budget
-              </div>
+            <div className="flex items-center gap-1">
+              {(['3M','6M','1A','ALL'] as const).map(w => (
+                <button key={w} onClick={() => setTrendWindow(w)}
+                  className={cn('text-[9px] font-bold px-2 py-0.5 rounded transition-all border',
+                    trendWindow === w
+                      ? 'bg-[#534AB7] border-[#534AB7] text-white'
+                      : 'border-white/10 text-[#3a5a7a] hover:text-[#8ab0c8] hover:border-white/20 bg-transparent')}>
+                  {w}
+                </button>
+              ))}
+              <button onClick={() => handleExportChartPNG(trendChartRef1)}
+                className="text-[9px] font-bold px-2 py-0.5 rounded border border-white/10 text-[#3a5a7a] hover:text-[#8ab0c8] hover:border-white/20 bg-transparent transition-all ml-1">
+                PNG
+              </button>
             </div>
           </div>
-          <div className="h-[220px] w-full">
+          <div className="flex items-center gap-4 mb-1">
+            <span className="flex items-center gap-1.5 text-[9px] text-[#6a8aaa] uppercase font-bold">
+              <span className="w-5 h-0.5 bg-[#534AB7] inline-block rounded" /> Importo SUB (€ 000)
+            </span>
+            <span className="flex items-center gap-1.5 text-[9px] text-[#6a8aaa] uppercase font-bold">
+              <span className="w-5 h-0.5 border-t-2 border-dashed border-[#1D9E75] inline-block" /> Budget NORM. (€ 000)
+            </span>
+          </div>
+          <div className="h-[200px] w-full" ref={trendChartRef1}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={cumulativeData}>
                 <defs>
-                  <linearGradient id="colorSub" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#378ADD" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#378ADD" stopOpacity={0}/>
+                  <linearGradient id="gradSub1" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#534AB7" stopOpacity={0.35}/>
+                    <stop offset="95%" stopColor="#534AB7" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="gradBudget1" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#1D9E75" stopOpacity={0.18}/>
+                    <stop offset="95%" stopColor="#1D9E75" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#3a5a7a', fontSize: 9}} dy={10} />
-                <RechartsTooltip 
-                  contentStyle={{ backgroundColor: '#0f2035', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '10px' }}
-                  itemStyle={{ color: '#ddeeff' }}
+                <CartesianGrid strokeDasharray="4 4" stroke="#ffffff06" vertical={false} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill:'#3a5a7a',fontSize:9}} dy={8} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill:'#2a4a6a',fontSize:8}} width={36} />
+                <RechartsTooltip
+                  contentStyle={{backgroundColor:'#0d1f36',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'10px',fontSize:'10px',padding:'8px 12px'}}
+                  itemStyle={{color:'#ddeeff'}}
+                  formatter={(v: any, name: string) => [`€ ${Number(v).toLocaleString('it')}k`, name === 'sub' ? 'Importo SUB' : 'Budget NORM.']}
                 />
-                <Area type="monotone" dataKey="sub" stroke="#378ADD" fillOpacity={1} fill="url(#colorSub)" strokeWidth={2} />
-                <Area type="monotone" dataKey="budget" stroke="#534AB7" fill="transparent" strokeWidth={1} strokeDasharray="5 5" />
+                <Area type="monotone" dataKey="budget" stroke="#1D9E75" strokeWidth={1.5} strokeDasharray="6 4" fillOpacity={1} fill="url(#gradBudget1)" />
+                <Area type="monotone" dataKey="sub"    stroke="#534AB7" strokeWidth={2}   fillOpacity={1} fill="url(#gradSub1)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -1529,7 +1793,8 @@ const Dashboard: React.FC = () => {
                   setContrattoSearch('');
                   setTipoFilter('');
                   setStatoFilter('');
-                  setCurrentTableMode('all');
+                  setWorklistTab('Tutti');
+                  setWorklistTipo('');
                 }}
                 className="h-10 px-4 bg-[#534AB7]/10 border border-[#534AB7]/30 rounded-xl text-[#a89ef8] text-xs font-bold hover:bg-[#534AB7]/20 transition-all flex items-center gap-2"
               >
@@ -1610,172 +1875,227 @@ const Dashboard: React.FC = () => {
         )}
       </AnimatePresence>
 
-      {/* DETAIL PANEL (Moved below Filters/Memo) */}
+      {/* DETAIL MODAL */}
       <AnimatePresence>
         {selectedDetail && (
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="mt-6 bg-gradient-to-br from-[#0f2035] to-[#0a1828] border border-[#534AB7]/35 rounded-2xl overflow-hidden shadow-2xl mb-6"
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[500] flex items-center justify-center p-6"
+            onClick={e => e.target === e.currentTarget && setSelectedDetail(null)}
           >
-            <div className="flex items-center justify-between px-6 py-4 bg-[#534AB7]/10 border-b border-white/5">
-              <div className="flex items-center gap-4">
-                <span className="text-[10px] font-bold text-[#a89ef8] uppercase tracking-widest">
-                  {selectedDetail._type === 'doc' ? 'Dettaglio Documento' : 'Dettaglio Pratica'}
-                </span>
-                <span className="text-sm font-bold text-[#ddeeff] font-mono">
-                  {selectedDetail.id || selectedDetail.sap || '—'}
-                </span>
-                <span className={cn("pill text-[10px]", 
-                  selectedDetail._type === 'doc' ? 'bg-[#F5A800]/15 text-[#F5A800]' : 
-                  selectedDetail.tipo === 'Subappalto' ? 'bg-[#378ADD]/15 text-[#85B7EB]' : 'bg-[#1D9E75]/15 text-[#5DCAA5]'
-                )}>
-                  {selectedDetail._type === 'doc' ? 'Documento' : selectedDetail.tipo}
-                </span>
-                <span className={cn("pill text-[10px]", STATO_CLS[selectedDetail.stato || selectedDetail.esito] || "bg-white/5 text-[#5a7a9a]")}>
-                  {selectedDetail.stato || selectedDetail.esito}
-                </span>
+          <motion.div
+            initial={{ scale: 0.96, opacity: 0, y: 12 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, y: 12 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+            className="bg-[#0d1f36] border border-white/10 rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
+          >
+            {/* MODAL HEADER */}
+            <div className="px-6 py-4 border-b border-white/5 bg-[#0b1a2e]">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3 flex-wrap min-w-0">
+                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-[#534AB7]/25 border border-[#534AB7]/40 text-[#a89ef8] font-mono shrink-0">
+                    ID {selectedDetail.id || selectedDetail.sap || '—'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-[#ddeeff] truncate">
+                      {selectedDetail._type === 'doc'
+                        ? `${selectedDetail.doc} — ${selectedDetail.app || selectedDetail.appaltatore}`
+                        : `${selectedDetail.appaltatore || selectedDetail.app} → ${selectedDetail.subfornitore || selectedDetail.sub || '—'}`
+                      }
+                    </div>
+                    <div className="text-[10px] text-[#3a5a7a] mt-0.5">
+                      {selectedDetail._type === 'doc'
+                        ? `SAP ${selectedDetail.sap} · Esito: ${selectedDetail.esito}`
+                        : `${selectedDetail.tipo} · scade il ${safeFormat(selectedDetail.scadenza, 'dd/MM/yyyy')}`
+                      }
+                    </div>
+                    {!selectedDetail._type || selectedDetail._type !== 'doc' ? (() => {
+                      const ogg = selectedDetail.oggettoRichiesta || selectedDetail.oggetto;
+                      return ogg ? (
+                        <div className="text-[10px] text-[#5a8aaa] mt-1 italic leading-snug line-clamp-2" title={ogg}>
+                          {ogg}
+                        </div>
+                      ) : null;
+                    })() : null}
+                  </div>
+                  <span className={cn('text-[10px] font-bold px-2.5 py-1 rounded-full border shrink-0', STATO_CLS[selectedDetail.stato || selectedDetail.esito] || 'bg-white/5 text-[#5a7a9a] border-white/10')}>
+                    {selectedDetail.stato || selectedDetail.esito}
+                  </span>
+                </div>
+                <button onClick={() => setSelectedDetail(null)} className="shrink-0 w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#6a8aaa] hover:bg-white/10 transition-colors">
+                  <X size={16} />
+                </button>
               </div>
-              <button onClick={() => setSelectedDetail(null)} className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#6a8aaa] hover:bg-white/10">
-                <X size={16} />
-              </button>
             </div>
-            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {selectedDetail._type === 'doc' ? (
-                // DOCUMENT FIELDS
-                [
-                  { label: 'Appaltatore', val: selectedDetail.appaltatore || selectedDetail.app },
-                  { label: 'Documento', val: selectedDetail.doc },
-                  { label: 'Responsabile', val: selectedDetail.responsabile || selectedDetail.utente },
-                  { label: 'Scadenza', val: safeFormat(selectedDetail.scad, 'dd/MM/yyyy') },
-                  { label: 'Esito', val: selectedDetail.esito },
-                  { label: 'Priorità', val: selectedDetail.priorita || '—' },
-                  { label: 'SAP', val: selectedDetail.sap || '—' },
-                  { label: 'Inserito il', val: safeFormat(selectedDetail.inserito, 'dd/MM/yyyy') },
-                ].map(f => (
-                  <div key={f.label} className="bg-white/3 border border-white/5 rounded-xl p-3.5">
-                    <div className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold mb-1">{f.label}</div>
-                    <div className="text-xs text-[#a0b8d0] font-medium truncate" title={f.val}>{f.val}</div>
-                  </div>
-                ))
-              ) : (
-                // CONTRACT FIELDS
-                [
-                  { label: 'Appaltatore', val: selectedDetail.appaltatore || selectedDetail.app },
-                  { label: 'Subfornitore', val: selectedDetail.subfornitore || selectedDetail.sub },
-                  { label: 'ID SAP Contratto', val: selectedDetail.idSap || '—' },
-                  { label: 'Società Committente', val: selectedDetail.socComm || '—' },
-                  { label: 'Unità Gestore', val: selectedDetail.unitaGest || '—' },
-                  { label: 'Contract Holder', val: selectedDetail.contractHolder || '—' },
-                  { label: 'Oggetto', val: selectedDetail.oggetto || '—' },
-                  { label: 'Attività', val: selectedDetail.attivita || '—' },
-                  { label: 'Data Inizio', val: safeFormat(selectedDetail.inizio, 'dd/MM/yyyy') },
-                  { label: 'Data Fine', val: safeFormat(selectedDetail.scadenza, 'dd/MM/yyyy') },
-                  { label: 'Importo (€)', val: selectedDetail.importoEur ? `€ ${Number(selectedDetail.importoEur).toLocaleString('it-IT')}` : '—' },
-                  { label: 'Residuo (€)', val: selectedDetail.residuoSub ? `€ ${Number(selectedDetail.residuoSub).toLocaleString('it-IT')}` : '—' },
-                  { label: 'Stato Qualifica', val: selectedDetail.statoQualifica || '—' },
-                  { label: 'Stato Anagrafica', val: selectedDetail.statoAnagrafica || '—' },
-                ].map(f => (
-                  <div key={f.label} className="bg-white/3 border border-white/5 rounded-xl p-3.5">
-                    <div className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold mb-1">{f.label}</div>
-                    <div className="text-xs text-[#a0b8d0] font-medium truncate" title={f.val}>{f.val}</div>
-                  </div>
-                ))
-              )}
-              {(selectedDetail.note || selectedDetail.descrizione) && (
-                <div className="col-span-full bg-white/3 border border-white/5 rounded-xl p-3.5">
-                  <div className="text-[9px] text-[#2a4a6a] uppercase tracking-widest font-bold mb-1">Note</div>
-                  <div className="text-xs text-[#a0b8d0]">{selectedDetail.note || selectedDetail.descrizione}</div>
-                </div>
-              )}
+            {/* MODAL BODY */}
+            <div className="overflow-y-auto custom-scrollbar flex-1 p-5 space-y-4">
+              {(() => {
+                const isDoc = selectedDetail._type === 'doc';
+                const sap = isDoc ? selectedDetail.sap : (selectedDetail.idSapContratto || selectedDetail.idSap || '');
+                const docsForPratica = sap ? documenti.filter(d => d.sap === sap) : [];
+                const criticiDocs = docsForPratica.filter(d =>
+                  ['Non Conforme', 'Richiesta Informazioni', 'Scaduto'].includes(d.esito) ||
+                  (d.scad && isValidDate(d.scad) && safeDiff(d.scad, today) <= 0)
+                );
+                const importoVal = parseEuro(selectedDetail.importoRichiestoEuro || selectedDetail.importoEur);
+                const maxVal = parseEuro(selectedDetail.importoMassimoSubappaltabile || selectedDetail.importoMaxSub);
+                const sogliaPct = maxVal > 0 ? Math.min(100, (importoVal / maxVal) * 100) : 0;
+                const residuoVal = Math.max(0, maxVal - importoVal);
+                const initials = (selectedDetail.utente || user?.nome || 'S').split(' ').map((n: string) => n[0]).slice(0,2).join('').toUpperCase();
+                const timeline = activityLog.filter(l =>
+                  l.detail?.includes(selectedDetail.id) || l.detail?.includes(sap) ||
+                  l.desc?.includes(selectedDetail.appaltatore || selectedDetail.app || '____')
+                ).slice(0, 6);
 
-              {/* TEAM & RESPONSABILI SECTION */}
-              {selectedDetail._type !== 'doc' && (
-                <div className="col-span-full grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
-                  {[
-                    { label: 'CH', val: selectedDetail.ch },
-                    { label: 'CAM', val: selectedDetail.cam },
-                    { label: 'CA', val: selectedDetail.ca },
-                    { label: 'CHC', val: selectedDetail.chc },
-                    { label: 'CC', val: selectedDetail.cc },
-                  ].map(r => (
-                    <div key={r.label} className="bg-[#534AB7]/5 border border-[#534AB7]/10 rounded-xl p-2.5">
-                      <div className="text-[8px] text-[#a89ef8] uppercase tracking-widest font-bold mb-0.5">{r.label}</div>
-                      <div className="text-[10px] text-[#ddeeff] font-medium truncate" title={r.val || '—'}>{r.val || '—'}</div>
+                return <>
+                  {/* 3 CARDS */}
+                  <div className={cn('grid gap-3', isDoc ? 'grid-cols-2' : 'grid-cols-3')}>
+                    {/* IMPORTO */}
+                    {!isDoc && (
+                      <div className="bg-[#0f2035] border border-white/8 rounded-xl p-4">
+                        <div className="text-[9px] text-[#534AB7] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#534AB7]" /> Importo
+                        </div>
+                        {importoVal > 0 ? <>
+                          <div className="text-xl font-bold text-[#ddeeff] font-mono mb-1">
+                            € {importoVal.toLocaleString('it-IT')}
+                          </div>
+                          {maxVal > 0 && <>
+                            <div className="text-[10px] text-[#3a5a7a] mb-2">
+                              {sogliaPct.toFixed(1)}% soglia · Residuo € {residuoVal.toLocaleString('it-IT')}
+                            </div>
+                            <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                              <div className={cn('h-full rounded-full', sogliaPct > 80 ? 'bg-[#E24B4A]' : 'bg-[#F5A800]')}
+                                style={{ width: `${sogliaPct}%` }} />
+                            </div>
+                          </>}
+                        </> : <div className="text-[11px] text-[#3a5a7a] italic">Dati non disponibili</div>}
+                      </div>
+                    )}
+
+                    {/* SCADENZE */}
+                    <div className="bg-[#0f2035] border border-white/8 rounded-xl p-4">
+                      <div className="text-[9px] text-[#378ADD] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#378ADD]" /> Scadenze
+                      </div>
+                      {(() => {
+                        const mainDate = isDoc ? selectedDetail.scad : selectedDetail.scadenza;
+                        const diff = mainDate && isValidDate(mainDate) ? safeDiff(mainDate, today) : null;
+                        return <>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Clock size={12} className="text-[#F5A800] shrink-0" />
+                            <span className="text-[11px] font-mono text-[#c8ddf0]">{safeFormat(mainDate, 'dd/MM/yyyy')}</span>
+                            {diff !== null && (
+                              <span className={cn('text-[10px] font-bold px-2 py-0.5 rounded-full', diff < 0 ? 'bg-[#E24B4A]/15 text-[#f09595]' : diff <= 30 ? 'bg-[#F5A800]/15 text-[#F5A800]' : 'bg-[#1D9E75]/15 text-[#5DCAA5]')}>
+                                {diff >= 0 ? '+' : ''}{diff}gg
+                              </span>
+                            )}
+                          </div>
+                          {docsForPratica.slice(0, 3).map((d, i) => (
+                            <div key={i} className="text-[10px] text-[#4a6a8a] mt-1">
+                              {d.doc}: <span className="text-[#6a8aaa] font-mono">{d.scad ? safeFormat(d.scad, 'dd/MM/yyyy') : '—'}</span>
+                            </div>
+                          ))}
+                        </>;
+                      })()}
                     </div>
-                  ))}
-                </div>
-              )}
+
+                    {/* DOCUMENTI */}
+                    <div className="bg-[#0f2035] border border-white/8 rounded-xl p-4">
+                      <div className="text-[9px] text-[#1D9E75] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#1D9E75]" /> Documenti
+                      </div>
+                      {docsForPratica.length > 0 ? <>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {docsForPratica.slice(0, 6).map((d, i) => {
+                            const col = d.esito === 'Conforme' ? '#1D9E75' : d.esito === 'Non Conforme' || d.esito === 'Scaduto' ? '#E24B4A' : '#F5A800';
+                            return (
+                              <span key={i} className="text-[9px] font-bold px-2 py-0.5 rounded-full border"
+                                style={{ color: col, borderColor: `${col}40`, backgroundColor: `${col}18` }}>
+                                {d.doc.length > 8 ? d.doc.slice(0, 8) + '…' : d.doc}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <div className="text-[10px] text-[#3a5a7a]">
+                          {docsForPratica.length} doc{docsForPratica.length > 1 ? 's' : ''}
+                          {criticiDocs.length > 0 && <span className="text-[#f09595] ml-1">· {criticiDocs.length} critico/i</span>}
+                        </div>
+                      </> : <div className="text-[10px] text-[#2a4a6a] italic">Nessun documento inserito</div>}
+                    </div>
+                  </div>
+
+                  {/* TIMELINE */}
+                  <div className="bg-[#0f2035] border border-white/8 rounded-xl p-4">
+                    <div className="text-[9px] text-[#a89ef8] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#a89ef8]" /> Timeline
+                    </div>
+                    {timeline.length > 0 ? (
+                      <div className="space-y-0">
+                        {timeline.map((l, i) => (
+                          <div key={i} className={cn('flex items-start gap-3 py-2.5', i < timeline.length - 1 ? 'border-b border-white/5' : '')}>
+                            <span className="text-[10px] text-[#2a4a6a] font-mono whitespace-nowrap w-[110px] shrink-0 mt-0.5">{l.tsDisplay}</span>
+                            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-[#534AB7] to-[#378ADD] flex items-center justify-center text-[9px] text-white font-bold shrink-0">
+                              {l.utente?.split(' ').map((n: string) => n[0]).slice(0,2).join('').toUpperCase() || 'S'}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] text-[#c8ddf0] font-medium">{l.desc}</div>
+                              <div className="text-[10px] text-[#3a5a7a] mt-0.5">{l.utente}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-[#2a4a6a] italic py-2">Nessuna attività registrata per questa pratica</div>
+                    )}
+                  </div>
+                </>;
+              })()}
             </div>
 
-            {/* ECONOMIC THRESHOLD SECTION */}
-            {economicStats && (
-              <div className="px-6 pb-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 bg-white/2 border border-white/5 rounded-2xl p-5">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-widest flex items-center gap-2">
-                      <Euro size={14} className="text-[#F5A800]" /> Analisi Soglia Subappaltabile
-                    </div>
-                    <div className="text-[10px] font-bold text-[#F5A800] bg-[#F5A800]/10 px-2.5 py-1 rounded-full">
-                      {economicStats.soglia.toFixed(1)}% Utilizzato
-                    </div>
-                  </div>
-                  
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-end">
-                      <div className="space-y-1">
-                        <div className="text-[9px] text-[#3a5a7a] uppercase font-bold">Importo Subappalto</div>
-                        <div className="text-lg font-bold text-[#ddeeff]">€ {economicStats.valSub.toLocaleString()}</div>
-                      </div>
-                      <div className="text-right space-y-1">
-                        <div className="text-[9px] text-[#3a5a7a] uppercase font-bold">Valore Contratto Principale</div>
-                        <div className="text-sm font-bold text-[#8ab0c8]">€ {economicStats.valContratto.toLocaleString()}</div>
-                      </div>
-                    </div>
-
-                    <div className="relative h-4 bg-black/20 rounded-full overflow-hidden border border-white/5">
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${economicStats.soglia}%` }}
-                        className={cn(
-                          "h-full rounded-full shadow-[0_0_15px_rgba(245,168,0,0.3)]",
-                          economicStats.soglia > 80 ? "bg-[#E24B4A]" : "bg-[#F5A800]"
-                        )}
-                      />
-                    </div>
-                    
-                    <div className="flex justify-between text-[9px] font-bold uppercase tracking-tighter">
-                      <div className="text-[#3a5a7a]">0%</div>
-                      <div className="text-[#3a5a7a]">Soglia Massima: 100%</div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="bg-[#534AB7]/5 border border-[#534AB7]/20 rounded-2xl p-5 flex flex-col justify-center items-center text-center">
-                  <div className="text-[9px] text-[#a89ef8] uppercase font-bold tracking-widest mb-2">Residuo Subappaltabile</div>
-                  <div className="text-3xl font-bold text-[#ddeeff] mb-1">{economicStats.residuo.toFixed(1)}%</div>
-                  <div className="text-[10px] text-[#5a7a9a]">Disponibile per ulteriori subaffidamenti</div>
-                  <div className="mt-4 w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                    <div className="h-full bg-[#534AB7]" style={{ width: `${economicStats.residuo}%` }} />
-                  </div>
-                </div>
-              </div>
-            )}
-            <div className="px-6 py-4 bg-black/15 border-t border-white/5 flex gap-3">
-              <button 
-                onClick={() => {
-                  if (selectedDetail._type === 'doc') {
-                    navigate('/controllo-documentale', { state: { sap: selectedDetail.sap } });
-                  } else {
-                    navigate('/subaffidamenti', { state: { selectedId: selectedDetail.id } });
-                  }
-                }}
-                className="h-9 px-4 bg-[#534AB7] text-[#e8e6f8] rounded-lg text-xs font-bold hover:bg-[#6358cc] transition-all flex items-center gap-2"
+            {/* MODAL FOOTER */}
+            <div className="px-5 py-4 border-t border-white/5 bg-[#0b1a2e] flex gap-3">
+              <button
+                onClick={() => { navigate('/storico', { state: { praticaId: selectedDetail.id } }); setSelectedDetail(null); }}
+                className="flex-1 h-10 bg-[#534AB7] text-white rounded-xl text-xs font-bold hover:bg-[#6358cc] transition-all flex items-center justify-center gap-2"
               >
-                <ExternalLink size={14} /> Gestisci {selectedDetail._type === 'doc' ? 'Documento' : 'Pratica'}
+                <Edit2 size={13} /> Gestisci in Solleciti
+              </button>
+              <button
+                onClick={() => {
+                  const d = selectedDetail;
+                  const sap = d.idSapContratto || d.idSap || '';
+                  const docsLine = documenti.filter(doc => doc.sap === sap).map(doc => `${doc.doc}: ${doc.esito} — scad. ${doc.scad || '—'}`).join('\n');
+                  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Report ${d.id}</title>
+                  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Segoe UI',sans-serif;font-size:11px;color:#1a2a3a;padding:24px}
+                  h1{font-size:16px;font-weight:700;border-bottom:2px solid #534AB7;padding-bottom:8px;margin-bottom:16px}
+                  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+                  .cell{border:1px solid #e8edf3;border-radius:6px;padding:8px 12px}
+                  .lbl{font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:#6a8aaa;font-weight:700;margin-bottom:2px}
+                  .val{font-size:11px;font-weight:600}
+                  pre{background:#f7f9fc;border:1px solid #e8edf3;border-radius:6px;padding:10px;font-size:10px;white-space:pre-wrap}
+                  @page{margin:15mm;size:A4}</style></head><body>
+                  <h1>Report Pratica ${d.id} — ${d.appaltatore || d.app}</h1>
+                  <div class="grid">
+                    <div class="cell"><div class="lbl">Subfornitore</div><div class="val">${d.subfornitore || d.sub || '—'}</div></div>
+                    <div class="cell"><div class="lbl">Tipo</div><div class="val">${d.tipo || '—'}</div></div>
+                    <div class="cell"><div class="lbl">Stato</div><div class="val">${d.stato || '—'}</div></div>
+                    <div class="cell"><div class="lbl">Scadenza</div><div class="val">${safeFormat(d.scadenza, 'dd/MM/yyyy')}</div></div>
+                    <div class="cell"><div class="lbl">SAP Contratto</div><div class="val">${sap || '—'}</div></div>
+                    <div class="cell"><div class="lbl">Importo</div><div class="val">${d.importoRichiestoEuro || d.importoEur ? `€ ${parseEuro(d.importoRichiestoEuro || d.importoEur).toLocaleString('it-IT')}` : '—'}</div></div>
+                  </div>
+                  ${docsLine ? `<div class="lbl" style="margin-bottom:6px">Documenti</div><pre>${docsLine}</pre>` : ''}
+                  <div style="margin-top:16px;font-size:9px;color:#9ab0c8">Generato il ${format(new Date(), 'dd/MM/yyyy HH:mm')} — PSER Gestionale</div>
+                  <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close()}<\/script>
+                  </body></html>`;
+                  const w = window.open('', '_blank', 'width=900,height=700');
+                  if (w) { w.document.write(html); w.document.close(); }
+                }}
+                className="h-10 px-4 bg-[#1D9E75]/15 border border-[#1D9E75]/30 rounded-xl text-[#5DCAA5] text-xs font-bold hover:bg-[#1D9E75]/25 transition-all flex items-center gap-2"
+              >
+                <Download size={13} /> Genera report
               </button>
             </div>
+          </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1824,36 +2144,57 @@ const Dashboard: React.FC = () => {
         </div>
 
         <div className="bg-[#0f2035] border border-white/10 rounded-xl p-4 space-y-3 shadow-xl">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-[10px] font-bold text-[#ddeeff] uppercase tracking-widest flex items-center gap-2">
-              <Activity size={14} className="text-[#378ADD]" /> Trend Cumulativo Subappalti
+              <Activity size={14} className="text-[#534AB7]" /> Trend Cumulativo Subappalti
             </h3>
-            <div className="flex gap-2">
-              <div className="flex items-center gap-1 text-[8px] text-[#3a5a7a] uppercase font-bold">
-                <div className="w-2 h-2 rounded-full bg-[#378ADD]" /> Sub
-              </div>
-              <div className="flex items-center gap-1 text-[8px] text-[#3a5a7a] uppercase font-bold">
-                <div className="w-2 h-2 rounded-full bg-[#534AB7]" /> Budget
-              </div>
+            <div className="flex items-center gap-1">
+              {(['3M','6M','1A','ALL'] as const).map(w => (
+                <button key={w} onClick={() => setTrendWindow(w)}
+                  className={cn('text-[9px] font-bold px-2 py-0.5 rounded transition-all border',
+                    trendWindow === w
+                      ? 'bg-[#534AB7] border-[#534AB7] text-white'
+                      : 'border-white/10 text-[#3a5a7a] hover:text-[#8ab0c8] hover:border-white/20 bg-transparent')}>
+                  {w}
+                </button>
+              ))}
+              <button onClick={() => handleExportChartPNG(trendChartRef2)}
+                className="text-[9px] font-bold px-2 py-0.5 rounded border border-white/10 text-[#3a5a7a] hover:text-[#8ab0c8] hover:border-white/20 bg-transparent transition-all ml-1">
+                PNG
+              </button>
             </div>
           </div>
-          <div className="h-[220px] w-full">
+          <div className="flex items-center gap-4 mb-1">
+            <span className="flex items-center gap-1.5 text-[9px] text-[#6a8aaa] uppercase font-bold">
+              <span className="w-5 h-0.5 bg-[#534AB7] inline-block rounded" /> Importo SUB (€ 000)
+            </span>
+            <span className="flex items-center gap-1.5 text-[9px] text-[#6a8aaa] uppercase font-bold">
+              <span className="w-5 h-0.5 border-t-2 border-dashed border-[#1D9E75] inline-block" /> Budget NORM. (€ 000)
+            </span>
+          </div>
+          <div className="h-[220px] w-full" ref={trendChartRef2}>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={cumulativeData}>
                 <defs>
-                  <linearGradient id="colorSub2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#378ADD" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#378ADD" stopOpacity={0}/>
+                  <linearGradient id="gradSub2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#534AB7" stopOpacity={0.35}/>
+                    <stop offset="95%" stopColor="#534AB7" stopOpacity={0}/>
+                  </linearGradient>
+                  <linearGradient id="gradBudget2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor="#1D9E75" stopOpacity={0.18}/>
+                    <stop offset="95%" stopColor="#1D9E75" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#3a5a7a', fontSize: 9}} dy={10} />
+                <CartesianGrid strokeDasharray="4 4" stroke="#ffffff06" vertical={false} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill:'#3a5a7a',fontSize:9}} dy={8} />
+                <YAxis axisLine={false} tickLine={false} tick={{fill:'#2a4a6a',fontSize:8}} width={36} />
                 <RechartsTooltip
-                  contentStyle={{ backgroundColor: '#0f2035', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '10px' }}
-                  itemStyle={{ color: '#ddeeff' }}
+                  contentStyle={{backgroundColor:'#0d1f36',border:'1px solid rgba(255,255,255,0.1)',borderRadius:'10px',fontSize:'10px',padding:'8px 12px'}}
+                  itemStyle={{color:'#ddeeff'}}
+                  formatter={(v: any, name: string) => [`€ ${Number(v).toLocaleString('it')}k`, name === 'sub' ? 'Importo SUB' : 'Budget NORM.']}
                 />
-                <Area type="monotone" dataKey="sub" stroke="#378ADD" fillOpacity={1} fill="url(#colorSub2)" strokeWidth={2} />
-                <Area type="monotone" dataKey="budget" stroke="#534AB7" fill="transparent" strokeWidth={1} strokeDasharray="5 5" />
+                <Area type="monotone" dataKey="budget" stroke="#1D9E75" strokeWidth={1.5} strokeDasharray="6 4" fillOpacity={1} fill="url(#gradBudget2)" />
+                <Area type="monotone" dataKey="sub"    stroke="#534AB7" strokeWidth={2}   fillOpacity={1} fill="url(#gradSub2)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -1862,27 +2203,30 @@ const Dashboard: React.FC = () => {
         <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-xs font-semibold text-[#7a9ab8] flex items-center gap-2">
-              Distribuzione Stati 
+              Distribuzione Stati
               {selectedApp && <span className="text-[#534AB7] font-bold">— {selectedApp}</span>}
-              <span className="text-[#534AB7] font-bold">— {
-                currentTableMode === 'all' ? 'TOTALE SUBAFFIDAMENTI' : 
-                currentTableMode === 'subappalto' ? 'SUBAPPALTI' :
-                currentTableMode === 'subcontratto' ? 'SUBCONTRATTI' :
-                currentTableMode === 'attivi' ? 'AUTORIZZATI / ATTIVI' :
-                'RIGETTATI / CRITICI'
-              }</span>
+              <span className="text-[#534AB7] font-bold">—{' '}
+                {worklistTab === 'Tutti' && !worklistTipo ? 'TOTALE' :
+                 worklistTipo === 'Subappalto' ? 'SUBAPPALTI' :
+                 worklistTipo === 'Subcontratto' ? 'SUBCONTRATTI' :
+                 worklistTab.toUpperCase()}
+              </span>
             </h3>
             <div className="flex items-center gap-2">
               <div className="text-[9px] text-[#3a5a7a] bg-white/5 border border-white/10 rounded-full px-2.5 py-0.5 font-bold uppercase tracking-tighter">
-                {kpiFilteredData.length} {kpiFilteredData.length === 1 ? 'pratica' : 'pratiche'}
+                {worklistData.length} {worklistData.length === 1 ? 'pratica' : 'pratiche'}
               </div>
-              <button 
+              <button
                 onClick={() => {
                   setStatoFilter('');
                   setSelectedApp(null);
                   setAppSearch('');
                   setTipoFilter('');
-                  setCurrentTableMode('all');
+                  setWorklistTab('Tutti');
+                  setWorklistTipo('');
+                  setWorklistAppSearch('');
+                  setWorklistIdSearch('');
+                  setWorklistStato('');
                 }}
                 className="text-[9px] text-[#534AB7] hover:underline flex items-center gap-1"
               >
@@ -1926,10 +2270,9 @@ const Dashboard: React.FC = () => {
                         onMouseEnter={() => setHoveredStato(stato)}
                         onMouseLeave={() => setHoveredStato(null)}
                         onClick={() => {
-                          setStatoFilter(stato);
-                          setTimeout(() => {
-                            document.getElementById('main-table-card')?.scrollIntoView({ behavior: 'smooth' });
-                          }, 100);
+                          setWorklistStato(stato);
+                          setWorklistTab('Tutti');
+                          setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
                         }}
                       />
                     );
@@ -1989,10 +2332,9 @@ const Dashboard: React.FC = () => {
             <div className="flex-1 space-y-2">
               {donutData.map(([stato, cnt]) => (
                 <div key={stato} className="flex items-center justify-between group cursor-pointer" onClick={() => {
-                  setStatoFilter(stato);
-                  setTimeout(() => {
-                    document.getElementById('main-table-card')?.scrollIntoView({ behavior: 'smooth' });
-                  }, 100);
+                  setWorklistStato(stato);
+                  setWorklistTab('Tutti');
+                  setTimeout(() => worklistRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
                 }}>
                   <div className="flex items-center gap-2">
                     <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STATO_COLORS[stato] }} />
@@ -2008,106 +2350,128 @@ const Dashboard: React.FC = () => {
 
       {/* ROW A: SCADENZE & SOGLIE CONTRATTI */}
       <div className="grid grid-cols-2 gap-4 order-1">
-        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2.5">
-              <AlertTriangle size={18} className="text-[#E24B4A]" /> Scadenze & Critici
+        {/* ── PENDENZE DOCUMENTALI ── */}
+        <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.2)] flex flex-col">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2">
+              <AlertTriangle size={15} className="text-[#E24B4A]" /> Pendenze Documentali
             </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[#f09595] bg-[#E24B4A]/10 px-2.5 py-1 rounded-full font-bold">{alerts.length} attivi</span>
-              <button 
-                onClick={() => setShowCriticiModal(true)}
-                className="text-[10px] px-3 py-1.5 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5"
-              >
-                <ArrowUpRight size={12} /> Vedi tutti
-              </button>
-              <button 
-                onClick={() => handleExportPDF('Report Scadenze e Critici', alerts)}
-                className="text-[10px] px-3 py-1.5 rounded-lg border border-[#F5A800]/30 text-[#F5A800] bg-[#F5A800]/10 hover:bg-[#F5A800]/20 transition-all flex items-center gap-1.5"
-              >
-                <Download size={12} /> PDF
-              </button>
-              <button 
-                onClick={() => setShowEmailModal(true)}
-                className="text-[10px] px-3 py-1.5 rounded-lg border border-[#F5A800]/30 text-[#F5A800] bg-[#F5A800]/10 hover:bg-[#F5A800]/20 transition-all flex items-center gap-1.5"
-              >
-                <Mail size={12} /> Email
-              </button>
+            <div className="flex items-center gap-1.5">
+              <span className={cn(
+                'text-[10px] px-2 py-0.5 rounded-full font-bold',
+                pendenze.length > 0 ? 'text-[#f09595] bg-[#E24B4A]/10' : 'text-[#5DCAA5] bg-[#1D9E75]/10'
+              )}>
+                {pendenze.length} {pendenze.length === 1 ? 'pratica' : 'pratiche'}
+              </span>
+              {pendenze.length > 0 && (
+                <>
+                  <button
+                    onClick={handleExportPendenzeExcel}
+                    className="text-[9px] px-2 py-1 rounded-lg border border-[#1D9E75]/30 text-[#5DCAA5] bg-[#1D9E75]/10 hover:bg-[#1D9E75]/20 transition-all flex items-center gap-1"
+                  >
+                    <Download size={9} /> Excel
+                  </button>
+                  <button
+                    onClick={handleExportPendenzePDF}
+                    className="text-[9px] px-2 py-1 rounded-lg border border-[#534AB7]/30 text-[#a89ef8] bg-[#534AB7]/10 hover:bg-[#534AB7]/20 transition-all flex items-center gap-1"
+                  >
+                    <Download size={9} /> PDF
+                  </button>
+                  <button
+                    onClick={() => setShowPendenzeModal(true)}
+                    className="text-[9px] px-2 py-1 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1"
+                  >
+                    <ArrowUpRight size={10} /> Vedi tutti
+                  </button>
+                </>
+              )}
             </div>
           </div>
-          <div className="space-y-1">
-            {alerts.length > 0 ? alerts.slice(0, 4).map((d: any, i) => {
-              const isDoc = d._type === 'doc';
-              const date = isDoc ? d.scad : d.scadenza;
-              const diff = safeDiff(date, today);
-              const isRed = isDoc ? (d.esito === 'Non Conforme' || diff < 0) : (d.stato === 'Rigettata' || d.stato === 'Scaduta' || diff < 0);
-              
-              return (
-                <div key={i} className="flex items-start gap-3 py-2.5 border-b border-white/5 last:border-0 last:pb-0 group cursor-pointer" onClick={() => handleRowClick(d)}>
-                  <div className={cn(
-                    "w-7 h-7 rounded-lg flex items-center justify-center text-sm shrink-0",
-                    isRed ? "bg-[#E24B4A]/15" : "bg-[#F5A800]/12"
-                  )}>
-                    {isRed ? '🔴' : '🟡'}
+
+          {pendenze.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center py-8 text-center">
+              <CheckCircle2 size={28} className="text-[#1D9E75] mb-2 opacity-60" />
+              <div className="text-xs text-[#2a4a6a]">Nessuna pendenza documentale</div>
+            </div>
+          ) : (
+            <div className="overflow-y-auto max-h-[280px] custom-scrollbar">
+              {pendenze.slice(0, 8).map((p, idx) => (
+                <div
+                  key={p.id}
+                  className={cn('flex items-center justify-between py-2 px-1.5 rounded-lg transition-colors group', idx < pendenze.length - 1 && idx < 7 ? 'border-b border-white/5' : '')}
+                >
+                  <div
+                    className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer hover:bg-white/[0.03] py-0.5 rounded"
+                    onClick={() => setSelectedPendenza(p)}
+                  >
+                    <span className="w-2 h-2 rounded-full shrink-0 bg-[#E24B4A] shadow-[0_0_6px_#E24B4A]" />
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-[#c8ddf0] truncate max-w-[160px] group-hover:text-[#ddeeff] transition-colors">
+                        {p.appaltatore || p.app}
+                      </div>
+                      <div className="text-[10px] text-[#4a6a8a] truncate max-w-[160px]">
+                        {p._criticiCount} doc. critico/i
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-[#8ab0c8] font-medium truncate group-hover:text-[#ddeeff] transition-colors">
-                      {isDoc ? `${d.doc} — ${d.app}` : `${d.subfornitore || d.sub} — ${d.appaltatore || d.app}`}
-                    </div>
-                    <div className="text-[10px] text-[#2a4a6a] mt-0.5">
-                      {isDoc ? (
-                        d.esito === 'Non Conforme' ? 'Documento non conforme' :
-                        diff < 0 ? `Scaduto da ${Math.abs(diff)} giorni` :
-                        `Scade tra ${diff} giorni (${safeFormat(d.scad, 'dd/MM/yyyy')})`
-                      ) : (
-                        d.stato === 'Rigettata' ? 'Pratica rigettata — intervento richiesto' : 
-                        d.stato === 'Scaduta' ? 'Pratica scaduta' :
-                        diff < 0 ? `Scaduta da ${Math.abs(diff)} giorni` :
-                        `Scade tra ${diff} giorni (${safeFormat(d.scadenza, 'dd/MM/yyyy')})`
-                      )}
-                    </div>
+                  <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <button
+                      onClick={() => handleSollecitaPendenza(p)}
+                      className="text-[9px] font-bold px-2 py-1 rounded-lg border border-[#0078D4]/30 text-[#378ADD] bg-[#0078D4]/10 hover:bg-[#0078D4]/20 transition-all flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <Send size={9} /> Sollecita
+                    </button>
+                    <button
+                      onClick={() => { navigate('/storico', { state: { praticaId: p.id } }); }}
+                      className="text-[9px] font-bold px-2 py-1 rounded-lg border border-[#534AB7]/30 text-[#a89ef8] bg-[#534AB7]/10 hover:bg-[#534AB7]/20 transition-all whitespace-nowrap"
+                    >
+                      → Gestisci
+                    </button>
                   </div>
                 </div>
-              );
-            }) : (
-              <div className="text-center py-10 text-xs text-[#2a4a6a]">Nessuna criticità rilevata ✓</div>
-            )}
-          </div>
+              ))}
+              {pendenze.length > 8 && (
+                <button onClick={() => setShowPendenzeModal(true)} className="w-full text-center text-[10px] text-[#534AB7] hover:text-[#a89ef8] transition-colors font-medium py-2">
+                  + {pendenze.length - 8} altre pratiche
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="bg-[#0f2035] border border-white/5 rounded-xl p-4 shadow-[0_0_20px_rgba(0,0,0,0.2)]">
-          <div className="flex justify-between items-center mb-6">
-            <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2.5">
-              <Zap size={18} className="text-[#F5A800]" /> Soglie Contratti
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2">
+              <Zap size={15} className="text-[#F5A800]" /> Soglie Contratti
             </h3>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-[#F5A800] bg-[#F5A800]/10 px-2.5 py-1 rounded-full font-bold">{predictiveAlerts.length} to alerta</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-[#F5A800] bg-[#F5A800]/10 px-2 py-0.5 rounded-full font-bold">{predictiveAlerts.length} in allerta</span>
               <button
                 onClick={() => handleExportPDF('Report Soglie Contratti', predictiveAlerts)}
-                className="text-[10px] px-3 py-1.5 rounded-lg border border-[#F5A800]/30 text-[#F5A800] bg-[#F5A800]/10 hover:bg-[#F5A800]/20 transition-all flex items-center gap-1.5"
+                className="text-[9px] px-2 py-1 rounded-lg border border-[#F5A800]/30 text-[#F5A800] bg-[#F5A800]/10 hover:bg-[#F5A800]/20 transition-all flex items-center gap-1"
               >
-                <Download size={12} /> PDF
+                <Download size={9} /> PDF
               </button>
             </div>
           </div>
-          <div className="space-y-3 max-h-[220px] overflow-y-auto custom-scrollbar pr-2">
+          <div className="space-y-1.5 max-h-[260px] overflow-y-auto custom-scrollbar">
             {predictiveAlerts.length > 0 ? predictiveAlerts.map(a => (
-              <div key={a.id} className="bg-white/3 border border-white/5 rounded-xl p-3 flex items-center justify-between group hover:bg-[#534AB7]/10 transition-all cursor-pointer" onClick={() => handleRowClick(a)}>
-                <div className="space-y-1">
-                  <div className="text-[10px] font-bold text-[#ddeeff] group-hover:text-[#a89ef8]">{a.app}</div>
-                  <div className="text-[9px] text-[#3a5a7a] font-mono">{a.idSap || a.id}</div>
-                </div>
-                <div className="text-right space-y-1">
-                  <div className={cn("text-xs font-bold", a.pct >= 80 ? "text-[#E24B4A]" : "text-[#F5A800]")}>
-                    {Math.round(a.pct)}%
+              <div key={a.id} className="flex items-center gap-3 py-2 px-2.5 rounded-lg border border-white/5 hover:bg-[#534AB7]/10 transition-all cursor-pointer group" onClick={() => setSelectedSoglia(a)}>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="text-[9px] font-bold text-[#a89ef8] font-mono shrink-0">{a.idSap || a.id}</span>
+                    <span className={cn("text-[9px] font-bold ml-auto shrink-0", a.pct >= 80 ? "text-[#E24B4A]" : a.pct >= 60 ? "text-[#F5A800]" : "text-[#1D9E75]")}>
+                      {a.pct.toFixed(1)}%
+                    </span>
                   </div>
-                  <div className="w-16 h-1 bg-white/10 rounded-full overflow-hidden">
-                    <div className={cn("h-full", a.pct >= 80 ? "bg-[#E24B4A]" : "bg-[#F5A800]")} style={{ width: `${a.pct}%` }} />
+                  <div className="text-[10px] font-medium text-[#7a9ab8] group-hover:text-[#ddeeff] transition-colors truncate mb-1">{a.app || a.appaltatore}</div>
+                  <div className="w-full h-1 bg-white/8 rounded-full overflow-hidden">
+                    <div className={cn("h-full rounded-full transition-all", a.pct >= 80 ? "bg-[#E24B4A]" : a.pct >= 60 ? "bg-[#F5A800]" : "bg-[#1D9E75]")} style={{ width: `${Math.min(a.pct, 100)}%` }} />
                   </div>
                 </div>
               </div>
             )) : (
-              <div className="text-center py-10 text-xs text-[#3a5a7a] italic">Nessuna soglia superata</div>
+              <div className="text-center py-8 text-xs text-[#3a5a7a] italic">Nessuna soglia superata</div>
             )}
           </div>
         </div>
@@ -2117,71 +2481,158 @@ const Dashboard: React.FC = () => {
 
       {/* DETAIL PANEL (Removed from here) */}
 
-      {/* MAIN CONTENT AREA: TABLE OR GANTT */}
-      <motion.div 
-        id="main-table-card" 
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        className="bg-[#0f2035] border border-white/5 rounded-2xl overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.3)]"
-      >
-        {showGantt ? (
-          <div className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-[#ddeeff] uppercase tracking-widest flex items-center gap-2">
-                <GanttChartSquare size={16} className="text-[#534AB7]" /> Timeline Subaffidamenti
-              </h3>
-              <div className="flex gap-4">
-                <div className="flex items-center gap-1.5 text-[10px] text-[#3a5a7a] font-bold uppercase">
-                  <div className="w-3 h-3 rounded bg-[#378ADD]" /> Subappalto
-                </div>
-                <div className="flex items-center gap-1.5 text-[10px] text-[#3a5a7a] font-bold uppercase">
-                  <div className="w-3 h-3 rounded bg-[#1D9E75]" /> Subcontratto
-                </div>
-              </div>
+      {/* ═══════════════════ WORKLIST SUBAFFIDAMENTI ═══════════════════ */}
+      <div ref={worklistRef} className="mx-6 mb-6 bg-[#0d1f36] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-white/8 flex-wrap gap-3">
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2">
+              <LayoutGrid size={15} className="text-[#378ADD]" />
+              {worklistStato ? worklistStato :
+               worklistTab === 'Archivio' ? 'Archivio' :
+               worklistTipo === 'Subappalto' ? 'Subappalti' :
+               worklistTipo === 'Subcontratto' ? 'Subcontratti' :
+               worklistTab !== 'Tutti' ? worklistTab :
+               'Tutti i Subaffidamenti'}
+            </h3>
+            <span className="text-[10px] font-bold text-[#a89ef8] bg-[#534AB7]/15 border border-[#534AB7]/25 px-2.5 py-0.5 rounded-full">
+              {worklistData.length} risultati
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Search Appaltatore */}
+            <div className="relative">
+              <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#3a5a7a]" />
+              <input value={worklistAppSearch} onChange={e => setWorklistAppSearch(e.target.value)}
+                placeholder="Appaltatore..." className="pl-6 pr-3 h-7 text-[10px] bg-white/5 border border-white/10 rounded-lg text-[#c8ddf0] placeholder-[#2a4a6a] focus:outline-none focus:border-[#534AB7]/50 w-36" />
             </div>
+            {/* Search ID */}
+            <div className="relative">
+              <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#3a5a7a]" />
+              <input value={worklistIdSearch} onChange={e => setWorklistIdSearch(e.target.value)}
+                placeholder="ID contratto..." className="pl-6 pr-3 h-7 text-[10px] bg-white/5 border border-white/10 rounded-lg text-[#c8ddf0] placeholder-[#2a4a6a] focus:outline-none focus:border-[#534AB7]/50 w-32" />
+            </div>
+            {/* Tipo dropdown */}
+            <select value={worklistTipo} onChange={e => setWorklistTipo(e.target.value)}
+              className="h-7 px-2.5 text-[10px] bg-[#0d1f36] border border-white/10 rounded-lg text-[#8ab0c8] focus:outline-none focus:border-[#534AB7]/50">
+              <option value="">Tutti i tipi</option>
+              <option value="Subappalto">Subappalto</option>
+              <option value="Subcontratto">Subcontratto</option>
+            </select>
+            {/* Stato dropdown */}
+            <select value={worklistStato} onChange={e => setWorklistStato(e.target.value)}
+              className="h-7 px-2.5 text-[10px] bg-[#0d1f36] border border-white/10 rounded-lg text-[#8ab0c8] focus:outline-none focus:border-[#534AB7]/50">
+              <option value="">Tutti gli stati</option>
+              {['Inviata','Autorizzata','In Attesa SAP','Da Autorizzare','Attivata','In Modifica','Richiesta Informazioni','Rigettata','Scaduta','Chiusa','Annullata'].map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            {/* Reset */}
+            <button onClick={() => { setWorklistAppSearch(''); setWorklistIdSearch(''); setWorklistTipo(''); setWorklistStato(''); setWorklistTab('Tutti'); }}
+              className="h-7 px-2.5 text-[9px] rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
+              <RotateCcw size={10} /> Reset
+            </button>
+            {/* Excel */}
+            <button onClick={() => handleExportExcel(worklistData)}
+              className="h-7 px-2.5 text-[9px] rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
+              <FileSpreadsheet size={10} /> Excel
+            </button>
+            {/* PDF */}
+            <button onClick={() => handleExportPDF(worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti'), worklistData)}
+              className="h-7 px-2.5 text-[9px] rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
+              <Download size={10} /> PDF
+            </button>
+            {/* Genera report bulk */}
+            <button
+              onClick={() => handleGeneraReportBulk(
+                worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti'),
+                worklistData
+              )}
+              className="h-7 px-3 text-[9px] font-bold rounded-lg border border-[#1D9E75]/40 text-[#5DCAA5] bg-[#1D9E75]/10 hover:bg-[#1D9E75]/20 transition-all flex items-center gap-1.5"
+            >
+              <Download size={10} /> Genera report
+            </button>
+            {/* Timeline toggle */}
+            <button onClick={() => setShowGantt(!showGantt)}
+              className={cn('h-7 px-2.5 text-[9px] font-bold rounded-lg border transition-all flex items-center gap-1.5',
+                showGantt
+                  ? 'bg-[#534AB7]/30 border-[#534AB7]/50 text-[#a89ef8]'
+                  : 'border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10')}>
+              <GanttChartSquare size={10} /> Timeline
+            </button>
+            {/* Archivio toggle */}
+            <button onClick={() => setWorklistTab(worklistTab === 'Archivio' ? 'Tutti' : 'Archivio')}
+              className={cn('h-7 px-3 text-[9px] font-bold rounded-lg border transition-all flex items-center gap-1.5',
+                worklistTab === 'Archivio'
+                  ? 'bg-[#F5A800]/15 border-[#F5A800]/30 text-[#F5A800]'
+                  : 'border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10')}>
+              <Archive size={10} /> Archivio
+            </button>
+            {/* Density */}
+            <div className="flex items-center gap-0.5 ml-1">
+              {(['compact','normal','large'] as const).map(d => (
+                <button key={d} onClick={() => setWorklistDensity(d)}
+                  className={cn('w-6 h-6 rounded text-[9px] font-bold border transition-all',
+                    worklistDensity === d ? 'bg-[#534AB7]/30 border-[#534AB7]/50 text-[#a89ef8]' : 'border-white/10 text-[#3a5a7a] bg-transparent hover:bg-white/5')}>
+                  C
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
-            <div className="overflow-x-auto custom-scrollbar pb-4">
-              <div className="min-w-[1000px] space-y-4">
-                {/* MONTH HEADERS */}
-                <div className="grid grid-cols-[250px_1fr] border-b border-white/5 pb-2">
-                  <div className="text-[10px] text-[#3a5a7a] font-bold uppercase">Appaltatore / Subfornitore</div>
+        {/* Tabs */}
+        <div className="flex items-center gap-1 px-4 py-2 border-b border-white/5 overflow-x-auto">
+          {(['Tutti','Autorizzate','Inviate','Scadute','Richiesta info','Attivate'] as const).map(tab => (
+            <button key={tab} onClick={() => setWorklistTab(tab)}
+              className={cn('flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold rounded-lg whitespace-nowrap transition-all border',
+                worklistTab === tab
+                  ? 'bg-[#534AB7]/20 border-[#534AB7]/40 text-[#a89ef8]'
+                  : 'border-transparent text-[#3a5a7a] hover:text-[#8ab0c8] hover:bg-white/5')}>
+              {tab}
+              <span className={cn('text-[9px] px-1.5 py-0.5 rounded-full font-mono',
+                worklistTab === tab ? 'bg-[#534AB7]/30 text-[#a89ef8]' : 'bg-white/5 text-[#2a4a6a]')}>
+                {worklistCounts[tab]}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Gantt Timeline View */}
+        {showGantt && (
+          <div className="p-5 border-b border-white/5">
+            <div className="overflow-x-auto custom-scrollbar pb-3">
+              <div className="min-w-[900px] space-y-3" style={{ maxHeight: '420px', overflowY: 'auto' }}>
+                <div className="grid grid-cols-[220px_1fr] border-b border-white/5 pb-2">
+                  <div className="text-[9px] text-[#2a4a6a] font-bold uppercase tracking-wider">Appaltatore / Subfornitore</div>
                   <div className="grid grid-cols-12 gap-0">
-                    {['Gen', 'Feb', 'Mar', 'Apr', 'Mag', 'Giu', 'Lug', 'Ago', 'Set', 'Ott', 'Nov', 'Dic'].map(m => (
-                      <div key={m} className="text-center text-[9px] text-[#3a5a7a] font-bold uppercase border-l border-white/5">{m}</div>
+                    {['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic'].map(m => (
+                      <div key={m} className="text-center text-[8px] text-[#2a4a6a] font-bold uppercase border-l border-white/5">{m}</div>
                     ))}
                   </div>
                 </div>
-
-                {/* GANTT ROWS */}
-                {tableData.slice(0, 15).map((d, i) => {
-                  const startMonth = d.inizio ? new Date(d.inizio).getMonth() : 0;
-                  const endMonth = d.scadenza ? new Date(d.scadenza).getMonth() : 11;
-                  const duration = Math.max(1, endMonth - startMonth + 1);
-                  
+                {worklistData.map((d, i) => {
+                  const iniDate = d.dataInizio || d.inizio || d.dataInizioContratto;
+                  const endDate = d.scadenza || d.dataFine || d.dataFineContratto;
+                  const startMonth = iniDate && isValidDate(iniDate) ? new Date(iniDate).getMonth() : 0;
+                  const endMonth   = endDate && isValidDate(endDate) ? new Date(endDate).getMonth() : 11;
+                  const left = startMonth / 12;
+                  const width = Math.max(1 / 12, (endMonth - startMonth + 1) / 12);
+                  const barColor = d.tipo === 'Subappalto' ? '#534AB7' : '#1D9E75';
                   return (
-                    <div key={d.id || i} className="grid grid-cols-[250px_1fr] items-center group hover:bg-white/[0.02] transition-colors py-1">
-                      <div className="pr-4 truncate">
-                        <div className="text-[10px] font-bold text-[#ddeeff] truncate">{d.appaltatore || d.app}</div>
-                        <div className="text-[9px] text-[#3a5a7a] truncate">{d.subfornitore || d.sub}</div>
+                    <div key={d.id || i} className="grid grid-cols-[220px_1fr] items-center group hover:bg-white/[0.02] transition-colors py-1">
+                      <div className="pr-3 truncate">
+                        <div className="text-[10px] font-bold text-[#c8ddf0] truncate">{d.appaltatore || d.app}</div>
+                        <div className="text-[8px] text-[#3a5a7a] truncate">{d.subfornitore || d.sub || '—'}</div>
                       </div>
-                      <div className="grid grid-cols-12 h-6 relative">
-                        {/* MONTH GRID LINES */}
-                        {Array.from({length: 12}).map((_, idx) => (
-                          <div key={idx} className="border-l border-white/5 h-full" />
+                      <div className="h-6 relative bg-white/[0.02] rounded">
+                        {Array.from({length:12}).map((_,idx) => (
+                          <div key={idx} className="absolute top-0 bottom-0 border-l border-white/5" style={{left:`${(idx/12)*100}%`}} />
                         ))}
-                        {/* BAR */}
-                        <motion.div 
-                          initial={{ scaleX: 0, originX: 0 }}
-                          animate={{ scaleX: 1 }}
-                          className={cn(
-                            "absolute top-1 h-4 rounded-md shadow-lg cursor-pointer hover:brightness-110 transition-all z-10",
-                            d.tipo === 'Subappalto' ? "bg-[#378ADD]" : "bg-[#1D9E75]"
-                          )}
-                          style={{ 
-                            left: `${(startMonth / 12) * 100}%`, 
-                            width: `${(duration / 12) * 100}%` 
-                          }}
+                        <div
+                          className="absolute top-1 bottom-1 rounded cursor-pointer hover:brightness-125 transition-all"
+                          style={{ left:`${left*100}%`, width:`${width*100}%`, background: barColor, opacity: 0.75 }}
+                          title={`${safeFormat(iniDate,'dd/MM/yyyy')} → ${safeFormat(endDate,'dd/MM/yyyy')}`}
                           onClick={() => handleRowClick(d)}
                         />
                       </div>
@@ -2190,95 +2641,199 @@ const Dashboard: React.FC = () => {
                 })}
               </div>
             </div>
-            <div className="text-center pt-4">
-              <p className="text-[10px] text-[#3a5a7a] italic">Visualizzazione limitata alle prime 15 pratiche filtrate. Usa i filtri per affinare la vista.</p>
-            </div>
-          </div>
-        ) : (
-          <div className="p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-sm font-bold text-[#ddeeff] flex items-center gap-2.5">
-                <FileText size={18} className="text-[#378ADD]" /> {tableTitle}
-              </h3>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-[#3a5a7a] bg-white/5 rounded px-2.5 py-1 font-medium">{tableData.length} record</span>
-                <button 
-                  onClick={() => handleExportPDF('Report Contratti e Risultati', tableData)}
-                  className="text-[10px] px-3 py-1.5 rounded-lg border border-[#1D9E75]/30 text-[#5DCAA5] bg-[#1D9E75]/10 hover:bg-[#1D9E75]/20 hover:shadow-[0_0_15px_rgba(29,158,117,0.2)] transition-all flex items-center gap-1.5"
-                >
-                  <Download size={12} /> PDF
-                </button>
-                <button 
-                  onClick={() => handleExportExcel(tableData)}
-                  className="text-[10px] px-3 py-1.5 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5"
-                >
-                  <FileSpreadsheet size={12} /> Excel
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="text-[10px] text-[#2a4a6a] uppercase tracking-wider">
-                    <th className="pb-3 px-3 font-semibold">{currentTableMode === 'docs' ? 'SAP' : 'ID Contratto'}</th>
-                    <th className="pb-3 px-3 font-semibold">Appaltatore</th>
-                    <th className="pb-3 px-3 font-semibold">{currentTableMode === 'docs' ? 'Documento' : 'Subfornitore'}</th>
-                    <th className="pb-3 px-3 font-semibold">{currentTableMode === 'docs' ? 'Responsabile' : 'Tipo'}</th>
-                    <th className="pb-3 px-3 font-semibold">{currentTableMode === 'docs' ? 'Esito' : 'Stato'}</th>
-                    <th className="pb-3 px-3 font-semibold">Scadenza</th>
-                    <th className="pb-3 px-3 font-semibold">Giorni Res.</th>
-                  </tr>
-                </thead>
-                <tbody className="text-xs">
-                  {tableData.length > 0 ? tableData.map((d: any, i) => {
-                    const isDoc = currentTableMode === 'docs';
-                    const date = isDoc ? d.scad : d.scadenza;
-                    const diff = date ? safeDiff(date, today) : null;
-                    return (
-                      <tr key={i} className="group hover:bg-white/[0.02] transition-colors cursor-pointer" onClick={() => handleRowClick(d)}>
-                        <td className="py-3.5 px-3 border-t border-white/5 font-mono text-[#4a9fe8]">{isDoc ? d.sap : d.id}</td>
-                        <td className="py-3.5 px-3 border-t border-white/5 text-[#a0b8d0] font-medium">{d.appaltatore || d.app}</td>
-                        <td className="py-3.5 px-3 border-t border-white/5 text-[#c8ddf0]">{isDoc ? d.doc : (d.subfornitore || d.sub)}</td>
-                        <td className="py-3.5 px-3 border-t border-white/5">
-                          {isDoc ? (
-                            <span className="text-[#8ab0c8]">{d.responsabile || d.utente}</span>
-                          ) : (
-                            <span className={cn("pill", d.tipo === 'Subappalto' ? 'bg-[#378ADD]/15 text-[#85B7EB]' : 'bg-[#1D9E75]/15 text-[#5DCAA5]')}>
-                              {d.tipo}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-3.5 px-3 border-t border-white/5">
-                          <span className={cn("pill", isDoc ? (d.esito === 'Conforme' ? 'bg-[#1D9E75]/15 text-[#5DCAA5]' : 'bg-[#E24B4A]/15 text-[#f09595]') : (STATO_CLS[d.stato] || "bg-white/5 text-[#5a7a9a]"))}>
-                            {isDoc ? d.esito : d.stato.replace('Richiesta Informazioni', 'Rich. Info')}
-                          </span>
-                        </td>
-                        <td className="py-3.5 px-3 border-t border-white/5 text-[#6a8aaa]">
-                          {safeFormat(date, 'dd/MM/yyyy')}
-                        </td>
-                        <td className="py-3.5 px-3 border-t border-white/5">
-                          {diff !== null ? (
-                            <span className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-bold font-mono",
-                              diff < 0 ? "bg-[#E24B4A]/12 text-[#f09595]" : diff <= 30 ? "bg-[#F5A800]/12 text-[#F5A800]" : "bg-[#1D9E75]/12 text-[#5DCAA5]"
-                            )}>
-                              {diff >= 0 ? '+' : ''}{diff}gg
-                            </span>
-                          ) : '—'}
-                        </td>
-                      </tr>
-                    );
-                  }) : (
-                    <tr>
-                      <td colSpan={7} className="py-20 text-center text-[#3a5a7a] text-sm">Nessun risultato trovato</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+            <div className="flex items-center gap-4 mt-2">
+              <span className="flex items-center gap-1.5 text-[8px] text-[#3a5a7a] font-bold uppercase"><span className="w-3 h-3 rounded bg-[#534AB7]/70" /> Subappalto</span>
+              <span className="flex items-center gap-1.5 text-[8px] text-[#3a5a7a] font-bold uppercase"><span className="w-3 h-3 rounded bg-[#1D9E75]/70" /> Subcontratto</span>
+              <span className="text-[8px] text-[#2a4a6a] italic ml-auto">{worklistData.length} pratiche · scroll per vedere tutte</span>
             </div>
           </div>
         )}
-      </motion.div>
+
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-white/8">
+                {([
+                  { key: 'id',       label: 'ID' },
+                  { key: 'app',      label: 'Appaltatore' },
+                  { key: 'sub',      label: 'Subfornitore' },
+                  { key: 'tipo',     label: 'Tipo' },
+                  { key: 'stato',    label: 'Stato' },
+                  { key: 'scadenza', label: 'Scadenza' },
+                ] as const).map(col => (
+                  <th key={col.key}
+                    onClick={() => { setSortCol(col.key); setSortDir(d => sortCol === col.key ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); }}
+                    className="py-2.5 px-3 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold cursor-pointer hover:text-[#6a8aaa] transition-colors select-none">
+                    <span className="flex items-center gap-1">
+                      {col.label}
+                      <span className="text-[8px]">{sortCol === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                    </span>
+                  </th>
+                ))}
+                <th className="py-2.5 px-3 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold">Valore</th>
+                <th className="py-2.5 px-3 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold">Soglia</th>
+                <th className="py-2.5 px-3 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold">Azioni</th>
+              </tr>
+            </thead>
+            <tbody>
+              {worklistData.length === 0 ? (
+                <tr><td colSpan={9} className="py-12 text-center text-[#2a4a6a] text-xs italic">Nessun risultato</td></tr>
+              ) : (() => {
+                const pageSize = worklistDensity === 'compact' ? 20 : worklistDensity === 'normal' ? 10 : 6;
+                let sorted = [...worklistData];
+                if (sortCol) {
+                  sorted.sort((a: any, b: any) => {
+                    const va = sortCol === 'id' ? a.id : sortCol === 'app' ? (a.appaltatore||a.app||'') : sortCol === 'sub' ? (a.subfornitore||a.sub||'') : sortCol === 'tipo' ? (a.tipo||'') : sortCol === 'stato' ? (a.stato||'') : (a.scadenza||'');
+                    const vb = sortCol === 'id' ? b.id : sortCol === 'app' ? (b.appaltatore||b.app||'') : sortCol === 'sub' ? (b.subfornitore||b.sub||'') : sortCol === 'tipo' ? (b.tipo||'') : sortCol === 'stato' ? (b.stato||'') : (b.scadenza||'');
+                    const cmp = String(va||'').localeCompare(String(vb||''), 'it', { numeric: true });
+                    return sortDir === 'asc' ? cmp : -cmp;
+                  });
+                }
+                return sorted.slice(0, pageSize).map((d, i) => {
+                const diff = d.scadenza && isValidDate(d.scadenza) ? safeDiff(d.scadenza, today) : null;
+                const rowPy = worklistDensity === 'compact' ? 'py-2' : worklistDensity === 'large' ? 'py-4' : 'py-3';
+                return (
+                  <tr key={i} className="border-b border-white/5 last:border-0 hover:bg-white/[0.025] transition-colors group">
+                    <td className={cn(rowPy, "px-3 text-[11px] font-bold text-[#a89ef8] font-mono whitespace-nowrap")}>{d.id}</td>
+                    <td className={cn(rowPy, "px-3 text-xs text-[#c8ddf0] font-medium max-w-[180px] truncate")}>{d.appaltatore || d.app}</td>
+                    <td className={cn(rowPy, "px-3 text-xs text-[#8ab0c8] max-w-[160px] truncate")}>{d.subfornitore || d.sub || '—'}</td>
+                    <td className={cn(rowPy, "px-3")}>
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-white/8 border border-white/10 text-[#8ab0c8] whitespace-nowrap">{d.tipo}</span>
+                    </td>
+                    <td className={cn(rowPy, "px-3")}>
+                      <span className={cn('inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border whitespace-nowrap',
+                        STATO_CLS[d.stato] ? STATO_CLS[d.stato] + ' border-transparent' : 'bg-white/5 text-[#5a7a9a] border-white/10')}>
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: 'currentColor' }} />
+                        {d.stato.replace('Richiesta Informazioni', 'Rich. Info')}
+                      </span>
+                    </td>
+                    <td className={cn(rowPy, "px-3 text-[11px] text-[#5a7a9a] font-mono whitespace-nowrap")}>
+                      {safeFormat(d.scadenza, 'dd/MM/yyyy')}
+                      {diff !== null && (
+                        <div className={cn('text-[9px] font-bold mt-0.5',
+                          diff < 0 ? 'text-[#f09595]' : diff <= 30 ? 'text-[#F5A800]' : 'text-[#3a5a7a]')}>
+                          {diff >= 0 ? '+' : ''}{diff}gg
+                        </div>
+                      )}
+                    </td>
+                    <td className={cn(rowPy, "px-3 text-[11px] font-bold text-[#c8ddf0] whitespace-nowrap")}>
+                      {(() => {
+                        const v = parseEuro(d.importoEur || d.importoRichiestoEuro);
+                        if (!v) return <span className="text-[#3a5a7a]">—</span>;
+                        return <span>€ {v.toLocaleString('it-IT')}</span>;
+                      })()}
+                    </td>
+                    <td className={cn(rowPy, "px-3 min-w-[100px]")}>
+                      {(() => {
+                        const key = (d.appaltatore || d.app || '').trim();
+                        const agg = appaltatoreAgg.get(key);
+                        if (!agg || !agg.maxSub) return <span className="text-[#3a5a7a] text-[10px]">—</span>;
+                        const pct = Math.min(100, Math.round((agg.totalCommitted / agg.maxSub) * 100));
+                        const barColor = pct >= 70 ? '#E24B4A' : pct >= 40 ? '#F5A800' : '#1D9E75';
+                        return (
+                          <div className="relative group flex items-center gap-2 cursor-default">
+                            <div className="flex-1 h-1.5 bg-white/8 rounded-full overflow-hidden">
+                              <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: barColor }} />
+                            </div>
+                            <span className="text-[10px] font-bold shrink-0" style={{ color: barColor }}>{pct}%</span>
+                            <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 pointer-events-none">
+                              <div className="bg-[#0d1f36] border border-white/15 rounded-lg px-3 py-2 shadow-xl text-[10px] whitespace-nowrap">
+                                <div className="text-[#8ab0c8]">Impegnato: <span className="text-[#c8ddf0] font-bold">€ {agg.totalCommitted.toLocaleString('it-IT')}</span></div>
+                                <div className="text-[#8ab0c8]">Massimo: <span className="text-[#c8ddf0] font-bold">€ {agg.maxSub.toLocaleString('it-IT')}</span></div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td className={cn(rowPy, "px-3")}>
+                      <div className="flex items-center gap-1">
+                        {/* Eye — dettaglio */}
+                        <button onClick={() => handleRowClick(d)} title="Visualizza dettaglio"
+                          className="w-6 h-6 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] hover:bg-[#534AB7]/20 hover:text-[#a89ef8] hover:border-[#534AB7]/30 transition-all flex items-center justify-center">
+                          <Eye size={11} />
+                        </button>
+                        {/* Pencil — quick edit stato */}
+                        <button onClick={() => setQuickEdit(quickEdit?.id === d.id ? null : { id: d.id, stato: d.stato })} title="Modifica stato"
+                          className="w-6 h-6 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] hover:bg-[#1D9E75]/20 hover:text-[#5DCAA5] hover:border-[#1D9E75]/30 transition-all flex items-center justify-center">
+                          <Edit2 size={11} />
+                        </button>
+                        {/* 3 punti — azioni rapide */}
+                        <div className="relative">
+                          <button onClick={() => setWorklistDots(worklistDots === d.id ? null : d.id)} title="Altre azioni"
+                            className="w-6 h-6 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] hover:bg-white/10 transition-all flex items-center justify-center">
+                            <span className="text-[11px] font-bold leading-none tracking-tight">···</span>
+                          </button>
+                          {worklistDots === d.id && (
+                            <div className="absolute right-0 top-7 z-50 bg-[#0d1f36] border border-white/15 rounded-xl shadow-2xl w-44 py-1 overflow-hidden">
+                              <button onClick={() => { navigate('/storico', { state: { praticaId: d.id } }); setWorklistDots(null); }}
+                                className="w-full px-3 py-2.5 text-[10px] text-left text-[#a89ef8] hover:bg-[#534AB7]/15 flex items-center gap-2 border-b border-white/5">
+                                <Bell size={11} /> Vai a Solleciti
+                              </button>
+                              <button onClick={() => {
+                                const app = d.appaltatore || d.app || '';
+                                const sap = d.idSapContratto || d.idSap || d.id;
+                                const cc = 'rosalinda.difiore@ren.eniplenitude.com,federica.damato@ren.eniplenitude.com,antoninoangelo.polito@ren.eniplenitude.com';
+                                const subj = encodeURIComponent(`Pratica ${sap} — ${app}`);
+                                const body = encodeURIComponent(`Gentile ${app},\n\nfacciamo seguito alla pratica di subaffidamento n. ${sap}.\n\nCordiali saluti,\nPietro De Vito\nPSER — Gestione Subaffidamenti`);
+                                window.open(`https://outlook.office.com/mail/deeplink/compose?cc=${encodeURIComponent(cc)}&subject=${subj}&body=${body}`, '_blank');
+                                setWorklistDots(null);
+                              }} className="w-full px-3 py-2.5 text-[10px] text-left text-[#378ADD] hover:bg-[#378ADD]/10 flex items-center gap-2 border-b border-white/5">
+                                <Mail size={11} /> Outlook
+                              </button>
+                              <button onClick={() => { handleSetRI(d.id); setWorklistDots(null); }}
+                                className="w-full px-3 py-2.5 text-[10px] text-left text-[#F5A800] hover:bg-[#F5A800]/10 flex items-center gap-2">
+                                <Info size={11} /> → Richiesta Info
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {/* Quick edit stato inline */}
+                      {quickEdit?.id === d.id && (
+                        <div className="mt-1.5 flex items-center gap-1.5">
+                          <select value={quickEdit.stato}
+                            onChange={e => setQuickEdit(q => q ? { ...q, stato: e.target.value } : q)}
+                            className="h-6 text-[9px] bg-[#0b1a2e] border border-[#534AB7]/40 rounded-lg text-[#c8ddf0] px-1.5 outline-none flex-1 min-w-0">
+                            {['Inviata','Autorizzata','In Attesa SAP','Da Autorizzare','Attivata','In Modifica','Richiesta Informazioni','Rigettata','Scaduta','Chiusa','Annullata'].map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                          <button onClick={() => {
+                            setSubaffidamenti(prev => prev.map(s => s.id === quickEdit.id ? { ...s, stato: quickEdit.stato } : s));
+                            addActivity('update', 'Dashboard', `Stato aggiornato: ${quickEdit.stato}`, `Pratica ${quickEdit.id}`);
+                            setQuickEdit(null);
+                          }} className="h-6 px-1.5 rounded-md bg-[#1D9E75]/20 border border-[#1D9E75]/40 text-[#5DCAA5] text-[9px] font-bold hover:bg-[#1D9E75]/30 transition-all shrink-0">
+                            ✓
+                          </button>
+                          <button onClick={() => setQuickEdit(null)} className="h-6 px-1.5 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] text-[9px] hover:bg-white/10 transition-all shrink-0">
+                            ✕
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              });
+              })()}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Footer count */}
+        {worklistData.length > (worklistDensity === 'compact' ? 20 : worklistDensity === 'normal' ? 10 : 6) && (
+          <div className="px-5 py-3 border-t border-white/5 flex items-center justify-between">
+            <span className="text-[10px] text-[#2a4a6a]">
+              Mostrando {worklistDensity === 'compact' ? 20 : worklistDensity === 'normal' ? 10 : 6} di {worklistData.length} pratiche
+            </span>
+            <button onClick={() => setShowTableModal(true)}
+              className="text-[10px] px-3 py-1.5 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
+              <ChevronRight size={12} /> Vedi tutte ({worklistData.length})
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* FLOATING BUTTONS */}
       <div className="fixed bottom-5 right-5 flex flex-col gap-3 z-[400]">
@@ -2380,6 +2935,510 @@ const Dashboard: React.FC = () => {
             </div>
           </motion.div>
         )}
+      </AnimatePresence>
+
+      {/* MODAL TABELLA COMPLETA */}
+      <AnimatePresence>
+        {showTableModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[500] flex items-center justify-center p-6"
+            onClick={e => e.target === e.currentTarget && setShowTableModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+              className="bg-[#0f2035] border border-white/10 rounded-2xl w-full max-w-6xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden"
+            >
+              {/* header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#0d1f36]">
+                <div className="flex items-center gap-3">
+                  <LayoutGrid size={16} className="text-[#378ADD]" />
+                  <span className="text-sm font-bold text-[#ddeeff]">
+                    {worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti')}
+                  </span>
+                  <span className="text-[10px] font-bold text-[#a89ef8] bg-[#534AB7]/15 border border-[#534AB7]/25 px-2.5 py-1 rounded-full">
+                    {worklistData.length} pratiche
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => handleExportPDF(worklistStato || (worklistTab !== 'Tutti' ? worklistTab : worklistTipo || 'Tutti i Subaffidamenti'), worklistData)}
+                    className="text-[10px] px-3 py-1.5 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
+                    <Download size={12} /> PDF
+                  </button>
+                  <button onClick={() => handleExportExcel(worklistData)}
+                    className="text-[10px] px-3 py-1.5 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1.5">
+                    <FileSpreadsheet size={12} /> Excel
+                  </button>
+                  <button onClick={() => setShowTableModal(false)} className="ml-1 text-[#3a5a7a] hover:text-[#a0b8d0] transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+              {/* table */}
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-white/8 sticky top-0 bg-[#0d1f36] z-10">
+                      {([
+                        { key: 'id',       label: 'ID' },
+                        { key: 'app',      label: 'Appaltatore' },
+                        { key: 'sub',      label: 'Subfornitore' },
+                        { key: 'tipo',     label: 'Tipo' },
+                        { key: 'stato',    label: 'Stato' },
+                        { key: 'scadenza', label: 'Scadenza' },
+                      ] as const).map(col => (
+                        <th key={col.key}
+                          onClick={() => { setSortCol(col.key); setSortDir(d => sortCol === col.key ? (d === 'asc' ? 'desc' : 'asc') : 'asc'); }}
+                          className="py-3 px-4 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold cursor-pointer hover:text-[#6a8aaa] transition-colors select-none"
+                        >
+                          <span className="flex items-center gap-1">
+                            {col.label}
+                            <span className="text-[8px]">{sortCol === col.key ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}</span>
+                          </span>
+                        </th>
+                      ))}
+                      <th className="py-3 px-4 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold">Valore</th>
+                      <th className="py-3 px-4 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold">Soglia</th>
+                      <th className="py-3 px-4 text-[9px] text-[#2a4a6a] uppercase tracking-wider font-bold">Azioni</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(() => {
+                      let sorted = [...worklistData];
+                      if (sortCol) {
+                        sorted.sort((a: any, b: any) => {
+                          const va = sortCol === 'id' ? a.id : sortCol === 'app' ? (a.appaltatore||a.app||'') : sortCol === 'sub' ? (a.subfornitore||a.sub||'') : sortCol === 'tipo' ? (a.tipo||'') : sortCol === 'stato' ? (a.stato||'') : (a.scadenza||'');
+                          const vb = sortCol === 'id' ? b.id : sortCol === 'app' ? (b.appaltatore||b.app||'') : sortCol === 'sub' ? (b.subfornitore||b.sub||'') : sortCol === 'tipo' ? (b.tipo||'') : sortCol === 'stato' ? (b.stato||'') : (b.scadenza||'');
+                          const cmp = String(va||'').localeCompare(String(vb||''), 'it', { numeric: true });
+                          return sortDir === 'asc' ? cmp : -cmp;
+                        });
+                      }
+                      return sorted.map((d: any, i: number) => {
+                        const diff = d.scadenza && isValidDate(d.scadenza) ? safeDiff(d.scadenza, today) : null;
+                        const statoCls = STATO_CLS[d.stato] ? STATO_CLS[d.stato] + ' border-transparent' : 'bg-white/5 text-[#5a7a9a] border-white/10';
+                        return (
+                          <tr key={i} className="border-b border-white/5 last:border-0 hover:bg-white/[0.025] transition-colors group">
+                            <td className="py-3 px-4 text-xs font-bold text-[#a89ef8] font-mono">{d.id}</td>
+                            <td className="py-3 px-4 text-xs text-[#c8ddf0] font-medium max-w-[180px] truncate">{d.appaltatore || d.app}</td>
+                            <td className="py-3 px-4 text-xs text-[#8ab0c8] max-w-[160px] truncate">{d.subfornitore || d.sub || '—'}</td>
+                            <td className="py-3 px-4">
+                              <span className="text-[10px] font-medium px-2.5 py-1 rounded-full bg-white/8 border border-white/10 text-[#8ab0c8]">{d.tipo}</span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className={cn('inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border', statoCls)}>
+                                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: 'currentColor' }} />
+                                {d.stato?.replace('Richiesta Informazioni', 'Rich. Info') || '—'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-[11px] text-[#5a7a9a] font-mono whitespace-nowrap">
+                              {safeFormat(d.scadenza, 'dd/MM/yyyy')}
+                              {diff !== null && (
+                                <div className={cn('text-[9px] font-bold mt-0.5', diff < 0 ? 'text-[#f09595]' : diff <= 30 ? 'text-[#F5A800]' : 'text-[#3a5a7a]')}>
+                                  {diff >= 0 ? '+' : ''}{diff}gg
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-[11px] font-bold text-[#c8ddf0] whitespace-nowrap">
+                              {(() => { const v = parseEuro(d.importoEur || d.importoRichiestoEuro); return v ? <span>€ {v.toLocaleString('it-IT')}</span> : <span className="text-[#3a5a7a]">—</span>; })()}
+                            </td>
+                            <td className="py-3 px-4 min-w-[100px]">
+                              {(() => {
+                                const key = (d.appaltatore || d.app || '').trim();
+                                const agg = appaltatoreAgg.get(key);
+                                if (!agg || !agg.maxSub) return <span className="text-[#3a5a7a] text-[10px]">—</span>;
+                                const pct = Math.min(100, Math.round((agg.totalCommitted / agg.maxSub) * 100));
+                                const barColor = pct >= 70 ? '#E24B4A' : pct >= 40 ? '#F5A800' : '#1D9E75';
+                                return (
+                                  <div className="relative group flex items-center gap-2 cursor-default">
+                                    <div className="flex-1 h-1.5 bg-white/8 rounded-full overflow-hidden">
+                                      <div className="h-full rounded-full" style={{ width: `${pct}%`, background: barColor }} />
+                                    </div>
+                                    <span className="text-[10px] font-bold shrink-0" style={{ color: barColor }}>{pct}%</span>
+                                    <div className="absolute bottom-full left-0 mb-2 hidden group-hover:block z-50 pointer-events-none">
+                                      <div className="bg-[#0d1f36] border border-white/15 rounded-lg px-3 py-2 shadow-xl text-[10px] whitespace-nowrap">
+                                        <div className="text-[#8ab0c8]">Impegnato: <span className="text-[#c8ddf0] font-bold">€ {agg.totalCommitted.toLocaleString('it-IT')}</span></div>
+                                        <div className="text-[#8ab0c8]">Massimo: <span className="text-[#c8ddf0] font-bold">€ {agg.maxSub.toLocaleString('it-IT')}</span></div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => { handleRowClick(d); setShowTableModal(false); }} title="Visualizza dettaglio"
+                                  className="w-6 h-6 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] hover:bg-[#534AB7]/20 hover:text-[#a89ef8] hover:border-[#534AB7]/30 transition-all flex items-center justify-center">
+                                  <Eye size={11} />
+                                </button>
+                                <button onClick={() => setQuickEdit(quickEdit?.id === d.id ? null : { id: d.id, stato: d.stato })} title="Modifica stato"
+                                  className="w-6 h-6 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] hover:bg-[#1D9E75]/20 hover:text-[#5DCAA5] hover:border-[#1D9E75]/30 transition-all flex items-center justify-center">
+                                  <Edit2 size={11} />
+                                </button>
+                                <button onClick={() => { navigate('/storico', { state: { praticaId: d.id } }); setShowTableModal(false); }} title="Vai a Solleciti"
+                                  className="w-6 h-6 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] hover:bg-[#F5A800]/20 hover:text-[#F5A800] hover:border-[#F5A800]/30 transition-all flex items-center justify-center">
+                                  <Bell size={11} />
+                                </button>
+                              </div>
+                              {quickEdit?.id === d.id && (
+                                <div className="mt-1.5 flex items-center gap-1">
+                                  <select value={quickEdit.stato} onChange={e => setQuickEdit(q => q ? { ...q, stato: e.target.value } : q)}
+                                    className="h-6 text-[9px] bg-[#0b1a2e] border border-[#534AB7]/40 rounded-lg text-[#c8ddf0] px-1.5 outline-none flex-1 min-w-0">
+                                    {['Inviata','Autorizzata','In Attesa SAP','Da Autorizzare','Attivata','In Modifica','Richiesta Informazioni','Rigettata','Scaduta','Chiusa','Annullata'].map(s => (
+                                      <option key={s} value={s}>{s}</option>
+                                    ))}
+                                  </select>
+                                  <button onClick={() => { setSubaffidamenti(prev => prev.map(s => s.id === quickEdit.id ? { ...s, stato: quickEdit.stato } : s)); addActivity('update', 'Dashboard', `Stato: ${quickEdit.stato}`, `Pratica ${quickEdit.id}`); setQuickEdit(null); }}
+                                    className="h-6 px-1.5 rounded-md bg-[#1D9E75]/20 border border-[#1D9E75]/40 text-[#5DCAA5] text-[9px] font-bold hover:bg-[#1D9E75]/30 transition-all">✓</button>
+                                  <button onClick={() => setQuickEdit(null)} className="h-6 px-1.5 rounded-md bg-white/5 border border-white/10 text-[#4a6a8a] text-[9px] hover:bg-white/10 transition-all">✕</button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL PENDENZE DOCUMENTALI */}
+      <AnimatePresence>
+        {showPendenzeModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[500] flex items-center justify-center p-6"
+            onClick={e => e.target === e.currentTarget && setShowPendenzeModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-[#0f2035] border border-white/10 rounded-2xl w-full max-w-5xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+            >
+              {/* header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#0d1f36]">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#E24B4A]/15 flex items-center justify-center text-[#f09595]">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-[#ddeeff]">Pendenze Documentali</h2>
+                    <p className="text-[10px] text-[#3a5a7a]">{pendenze.length} pratiche con allegati scaduti</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={handleExportPendenzeExcel} className="h-8 px-3 bg-[#1D9E75]/12 border border-[#1D9E75]/30 rounded-lg text-[11px] font-bold text-[#5DCAA5] hover:bg-[#1D9E75]/25 transition-all flex items-center gap-1.5">
+                    <Download size={12} /> Excel
+                  </button>
+                  <button onClick={handleExportPendenzePDF} className="h-8 px-3 bg-[#534AB7]/12 border border-[#534AB7]/30 rounded-lg text-[11px] font-bold text-[#a89ef8] hover:bg-[#534AB7]/25 transition-all flex items-center gap-1.5">
+                    <Download size={12} /> PDF
+                  </button>
+                  <button onClick={() => setShowPendenzeModal(false)} className="text-[#3a5a7a] hover:text-[#a0b8d0] transition-colors ml-1">
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+              {/* table */}
+              <div className="overflow-y-auto custom-scrollbar flex-1">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="text-[9px] text-[#2a4a6a] uppercase tracking-wider sticky top-0 bg-[#0d1f36] border-b border-white/8">
+                      {['ID Pratica', 'Appaltatore', 'Subfornitore', 'SAP Contratto', 'Stato', 'Documenti Critici', 'Azioni'].map(h => (
+                        <th key={h} className="py-3 px-4 font-bold">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendenze.map((p) => {
+                      const statoColor =
+                        p.stato === 'Richiesta Informazioni' ? '#F5A800' :
+                        p.stato === 'Autorizzata' ? '#1D9E75' :
+                        p.stato === 'Attivata' ? '#378ADD' :
+                        p.stato === 'In Modifica' ? '#a89ef8' : '#6a8aaa';
+                      return (
+                        <tr key={p.id} className="border-b border-white/5 last:border-0 hover:bg-white/[0.02] transition-colors">
+                          <td className="py-3 px-4 text-xs font-bold text-[#a89ef8] font-mono">{p.id}</td>
+                          <td className="py-3 px-4 text-xs text-[#c8ddf0] font-medium max-w-[160px] truncate">{p.appaltatore || p.app}</td>
+                          <td className="py-3 px-4 text-xs text-[#6a8aaa] max-w-[140px] truncate">{p.subfornitore || p.sub || '—'}</td>
+                          <td className="py-3 px-4 text-[11px] text-[#5a7a9a] font-mono">{p.idSapContratto || p.idSap || '—'}</td>
+                          <td className="py-3 px-4">
+                            <span className="text-[10px] font-bold px-2.5 py-1 rounded-full border" style={{ color: statoColor, borderColor: `${statoColor}40`, backgroundColor: `${statoColor}15` }}>
+                              {p.stato}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            {p._criticiCount > 0 ? (
+                              <div>
+                                <span className="text-[10px] font-bold text-[#f09595] bg-[#E24B4A]/10 px-2 py-0.5 rounded-full border border-[#E24B4A]/25">
+                                  {p._criticiCount} critico/i
+                                </span>
+                                <div className="text-[9px] text-[#4a6a8a] mt-1 space-y-0.5">
+                                  {p._docsCritici.slice(0, 3).map((d: any, i: number) => (
+                                    <div key={i} className="truncate max-w-[180px]">· {d.doc} <span style={{ color: d.esito === 'Non Conforme' ? '#E24B4A' : '#F5A800' }}>({d.esito})</span></div>
+                                  ))}
+                                  {p._criticiCount > 3 && <div className="text-[#3a5a7a]">+ {p._criticiCount - 3} altri</div>}
+                                </div>
+                              </div>
+                            ) : p._docsTotal > 0 ? (
+                              <span className="text-[10px] text-[#3a5a7a]">{p._docsTotal} doc{p._docsTotal > 1 ? 's' : ''} — nessun critico</span>
+                            ) : (
+                              <span className="text-[10px] text-[#2a4a6a] italic">Nessun documento inserito</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              {p.stato !== 'Richiesta Informazioni' && (
+                                <button
+                                  onClick={() => handleSetRI(p.id)}
+                                  className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-[#F5A800]/30 text-[#F5A800] bg-[#F5A800]/10 hover:bg-[#F5A800]/20 transition-all whitespace-nowrap"
+                                >
+                                  → RI
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleSollecitaPendenza(p)}
+                                className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-[#0078D4]/30 text-[#378ADD] bg-[#0078D4]/10 hover:bg-[#0078D4]/20 transition-all whitespace-nowrap flex items-center gap-1"
+                              >
+                                <Send size={10} /> Sollecita
+                              </button>
+                              <button
+                                onClick={() => { navigate('/storico', { state: { praticaId: p.id } }); setShowPendenzeModal(false); }}
+                                className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-[#534AB7]/30 text-[#a89ef8] bg-[#534AB7]/10 hover:bg-[#534AB7]/20 transition-all whitespace-nowrap"
+                              >
+                                → Gestisci
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MODAL SOGLIE CONTRATTI DETTAGLIO */}
+      <AnimatePresence>
+        {selectedSoglia && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[600] flex items-center justify-center p-6"
+            onClick={e => e.target === e.currentTarget && setSelectedSoglia(null)}>
+            <motion.div initial={{ scale: 0.95, y: 10 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 10 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+              className="bg-[#0d1f36] border border-white/12 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+                <div className="flex items-center gap-2">
+                  <GanttChartSquare size={15} className="text-[#534AB7]" />
+                  <span className="text-sm font-bold text-[#ddeeff]">Soglie Contratti</span>
+                  <span className={cn('text-[9px] font-bold px-2 py-0.5 rounded-full border',
+                    selectedSoglia.pct >= 80 ? 'bg-[#E24B4A]/15 border-[#E24B4A]/30 text-[#f09595]' : 'bg-[#F5A800]/15 border-[#F5A800]/30 text-[#F5A800]')}>
+                    {selectedSoglia.pct >= 80 ? '🔴 IN ALLERTA' : '⚠ ATTENZIONE'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => { handleExportPDF('Soglia Contratto', [selectedSoglia]); }}
+                    className="text-[9px] px-2.5 py-1 rounded-lg border border-white/10 text-[#6a8aaa] bg-white/5 hover:bg-white/10 transition-all flex items-center gap-1">
+                    <Download size={10} /> PDF
+                  </button>
+                  <button onClick={() => setSelectedSoglia(null)} className="text-[#3a5a7a] hover:text-white transition-colors"><X size={18} /></button>
+                </div>
+              </div>
+              <div className="p-6 space-y-5">
+                {/* SAP + Name */}
+                <div>
+                  <div className="text-[10px] font-bold text-[#534AB7] font-mono tracking-wider mb-1">{selectedSoglia.idSap || selectedSoglia.id}</div>
+                  <div className="text-sm font-bold text-[#c8ddf0] leading-snug">{selectedSoglia.appaltatore || selectedSoglia.app}</div>
+                  <div className="text-[10px] text-[#4a6a8a] mt-1">{selectedSoglia.subfornitore || selectedSoglia.sub}</div>
+                </div>
+                {/* Big % */}
+                <div className="flex items-end justify-between">
+                  <div>
+                    <div className={cn('text-5xl font-black tabular-nums leading-none',
+                      selectedSoglia.pct >= 80 ? 'text-[#E24B4A]' : selectedSoglia.pct >= 60 ? 'text-[#F5A800]' : 'text-[#1D9E75]')}>
+                      {Math.round(selectedSoglia.pct)}%
+                    </div>
+                    <div className="text-[10px] text-[#3a5a7a] uppercase font-bold tracking-widest mt-1">Utilizzata</div>
+                  </div>
+                  <div className="text-right text-[9px] text-[#3a5a7a] space-y-1">
+                    <div>Soglia alert: <span className="text-[#F5A800] font-bold">50%</span></div>
+                    <div>Soglia critica: <span className="text-[#E24B4A] font-bold">80%</span></div>
+                  </div>
+                </div>
+                {/* Progress bar */}
+                <div className="w-full h-3 bg-white/8 rounded-full overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }} animate={{ width: `${Math.min(selectedSoglia.pct, 100)}%` }}
+                    transition={{ duration: 0.8, ease: 'easeOut' }}
+                    className={cn('h-full rounded-full',
+                      selectedSoglia.pct >= 80 ? 'bg-[#E24B4A]' : selectedSoglia.pct >= 60 ? 'bg-[#F5A800]' : 'bg-[#1D9E75]')} />
+                </div>
+                {/* KPI row */}
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: 'Usato', value: parseEuro(selectedSoglia.importoEur || selectedSoglia.importoRichiestoEuro), color: 'text-[#c8ddf0]' },
+                    { label: 'Residuo', value: Math.max(0, parseEuro(selectedSoglia.importoMaxSub) - parseEuro(selectedSoglia.importoEur || selectedSoglia.importoRichiestoEuro)), color: 'text-[#5DCAA5]' },
+                    { label: 'Max', value: parseEuro(selectedSoglia.importoMaxSub), color: 'text-[#a89ef8]' },
+                  ].map(k => (
+                    <div key={k.label} className="bg-white/4 border border-white/8 rounded-xl p-3 text-center">
+                      <div className="text-[8px] text-[#3a5a7a] uppercase font-bold mb-1">{k.label}</div>
+                      <div className={cn('text-xs font-bold font-mono', k.color)}>
+                        €{k.value.toLocaleString('it-IT', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {/* Footer action */}
+                <button onClick={() => { handleRowClick(selectedSoglia); setSelectedSoglia(null); }}
+                  className="w-full h-9 rounded-xl bg-[#534AB7]/20 border border-[#534AB7]/35 text-[#a89ef8] text-[11px] font-bold hover:bg-[#534AB7]/35 transition-all flex items-center justify-center gap-2">
+                  <Eye size={12} /> Vedi dettaglio pratica
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* PENDENZA DETAIL MODAL */}
+      <AnimatePresence>
+        {selectedPendenza && (() => {
+          const p = selectedPendenza;
+          const sap = p.idSapContratto || p.idSap || '';
+          const docsAll = sap ? documenti.filter(d => d.sap === sap) : [];
+          const docsCritici = docsAll.filter(d => ['Non Conforme', 'Richiesta Informazioni', 'Scaduto'].includes(d.esito));
+          const docsOk = docsAll.filter(d => !['Non Conforme', 'Richiesta Informazioni', 'Scaduto'].includes(d.esito));
+          const importoVal = parseEuro(p.importoRichiestoEuro || p.importoEur);
+          const maxVal = parseEuro(p.importoMassimoSubappaltabile || p.importoMaxSub);
+          const sogliaPct = maxVal > 0 ? Math.min(100, (importoVal / maxVal) * 100) : 0;
+          const CC_FISSI = 'rosalinda.difiore@ren.eniplenitude.com,federica.damato@ren.eniplenitude.com,antoninoangelo.polito@ren.eniplenitude.com';
+          const docsText = docsCritici.map(d => `  • ${d.doc}: ${d.esito}${d.scad ? ` (scad. ${fmtDate(d.scad)})` : ''}`).join('\n');
+          const subject = `Richiesta aggiornamento documenti — ${p.appaltatore || p.app}`;
+          const body = `Gentile ${p.appaltatore || p.app},\n\nin riferimento al contratto SAP ${sap}, si segnalano i seguenti documenti non conformi:\n\n${docsText}\n\nSi prega di provvedere all'aggiornamento entro i termini contrattuali.\n\nCordiali saluti,\nPietro De Vito — PSER Gestione Subaffidamenti`;
+          return (
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[520] flex items-center justify-center p-6"
+              onClick={e => e.target === e.currentTarget && setSelectedPendenza(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.96, opacity: 0, y: 12 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0, y: 12 }}
+                transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+                className="bg-[#0d1f36] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden"
+              >
+                {/* HEADER */}
+                <div className="px-6 py-4 border-b border-white/5 bg-[#0b1a2e] flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-[#534AB7]/25 border border-[#534AB7]/40 text-[#a89ef8] font-mono shrink-0">
+                        SAP {sap || p.id}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#E24B4A]/15 border border-[#E24B4A]/30 text-[#f09595] shrink-0">
+                        {docsCritici.length} doc. critico/i
+                      </span>
+                    </div>
+                    <div className="text-base font-bold text-[#ddeeff] truncate">{p.appaltatore || p.app}</div>
+                    <div className="text-[11px] text-[#4a6a8a] mt-0.5">{p.subfornitore || p.sub || '—'} · {p.tipo}</div>
+                  </div>
+                  <button onClick={() => setSelectedPendenza(null)} className="shrink-0 w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-[#6a8aaa] hover:bg-white/10 transition-colors">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* BODY */}
+                <div className="overflow-y-auto custom-scrollbar flex-1 p-5 space-y-4">
+                  {/* SOGLIA */}
+                  {maxVal > 0 && (
+                    <div className="bg-[#0f2035] border border-white/8 rounded-xl p-4">
+                      <div className="text-[9px] text-[#534AB7] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#534AB7]" /> Soglia Contratto
+                      </div>
+                      <div className="flex items-end justify-between mb-2">
+                        <div>
+                          <span className="text-xl font-bold text-[#ddeeff] font-mono">€ {importoVal.toLocaleString('it-IT')}</span>
+                          <span className="text-[11px] text-[#3a5a7a] ml-2">/ € {maxVal.toLocaleString('it-IT')} max</span>
+                        </div>
+                        <span className={cn('text-sm font-bold', sogliaPct >= 80 ? 'text-[#E24B4A]' : sogliaPct >= 60 ? 'text-[#F5A800]' : 'text-[#1D9E75]')}>
+                          {sogliaPct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="h-2 bg-white/8 rounded-full overflow-hidden">
+                        <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min(sogliaPct, 100)}%` }} transition={{ duration: 0.8, ease: 'easeOut' }}
+                          className={cn('h-full rounded-full', sogliaPct >= 80 ? 'bg-[#E24B4A]' : sogliaPct >= 60 ? 'bg-[#F5A800]' : 'bg-[#1D9E75]')} />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DOCUMENTI CRITICI */}
+                  {docsCritici.length > 0 && (
+                    <div className="bg-[#0f2035] border border-[#E24B4A]/20 rounded-xl p-4">
+                      <div className="text-[9px] text-[#E24B4A] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                        <AlertTriangle size={10} /> Documenti da Regolarizzare
+                      </div>
+                      <div className="space-y-2">
+                        {docsCritici.map((d, i) => {
+                          const cfg = d.esito === 'Scaduto' ? { color: '#f09595', bg: 'bg-[#E24B4A]/10', border: 'border-[#E24B4A]/25' }
+                            : d.esito === 'Non Conforme' ? { color: '#f09595', bg: 'bg-[#E24B4A]/10', border: 'border-[#E24B4A]/25' }
+                            : { color: '#F5A800', bg: 'bg-[#F5A800]/10', border: 'border-[#F5A800]/25' };
+                          return (
+                            <div key={i} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                              <div className="text-xs font-semibold text-[#c8ddf0]">{d.doc}</div>
+                              <div className="flex items-center gap-2">
+                                {d.scad && <span className="text-[10px] text-[#3a5a7a] font-mono">{fmtDate(d.scad)}</span>}
+                                <span className={cn('text-[9px] font-bold px-2 py-0.5 rounded-full border', cfg.bg, cfg.border)} style={{ color: cfg.color }}>
+                                  {d.esito}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ALTRI DOCUMENTI */}
+                  {docsOk.length > 0 && (
+                    <div className="bg-[#0f2035] border border-white/8 rounded-xl p-4">
+                      <div className="text-[9px] text-[#1D9E75] uppercase tracking-widest font-bold flex items-center gap-1.5 mb-3">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#1D9E75]" /> Altri Documenti ({docsOk.length})
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {docsOk.map((d, i) => (
+                          <span key={i} className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#1D9E75]/10 border border-[#1D9E75]/25 text-[#5DCAA5]">
+                            {d.doc}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* FOOTER */}
+                <div className="px-5 py-4 border-t border-white/5 bg-[#0b1a2e] flex gap-2.5">
+                  <button
+                    onClick={() => {
+                      window.open(`https://outlook.office.com/mail/deeplink/compose?cc=${encodeURIComponent(CC_FISSI)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`, '_blank');
+                    }}
+                    className="flex-1 h-11 bg-gradient-to-r from-[#0078D4] to-[#106EBE] text-white rounded-xl text-xs font-bold shadow-lg hover:opacity-90 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Mail size={14} /> Invia Sollecito via Outlook
+                  </button>
+                  <button
+                    onClick={() => { navigate('/storico', { state: { praticaId: p.id } }); setSelectedPendenza(null); }}
+                    className="h-11 px-4 bg-[#534AB7]/20 border border-[#534AB7]/35 text-[#a89ef8] rounded-xl text-xs font-bold hover:bg-[#534AB7]/35 transition-all flex items-center justify-center gap-2 whitespace-nowrap"
+                  >
+                    <Edit2 size={13} /> Gestisci in Solleciti
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          );
+        })()}
       </AnimatePresence>
 
       {/* MODALS */}
@@ -2694,7 +3753,7 @@ const Dashboard: React.FC = () => {
                           <td className="py-3 px-3">
                             <span className={cn("pill", STATO_CLS[d.stato] || "bg-white/5 text-[#5a7a9a]")}>{d.stato}</span>
                           </td>
-                          <td className="py-3 px-3 text-[#6a8aaa]">{d.scadenza}</td>
+                          <td className="py-3 px-3 text-[#6a8aaa]">{fmtDate(d.scadenza)}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -29,7 +30,7 @@ import { cn } from '../lib/utils';
 import { format } from 'date-fns';
 import { it } from 'date-fns/locale';
 import * as XLSX from 'xlsx';
-import { Subaffidamento } from '../types';
+import { Subaffidamento, Appaltatore, DocumentoControllo, FollowUp } from '../types';
 
 type DupAction = 'update' | 'skip';
 
@@ -59,6 +60,17 @@ const FIELD_LABELS: Record<string, string> = {
 
 const CHECKED_FIELDS = Object.keys(FIELD_LABELS);
 
+/** Converte serial Excel (numero) → stringa ISO yyyy-MM-dd. Lascia invariata una stringa già formattata. */
+const excelDate = (val: unknown): string => {
+  if (!val) return '';
+  if (typeof val === 'string') return val.slice(0, 10);
+  if (typeof val === 'number') {
+    const d = new Date(Math.round((val - 25569) * 86400 * 1000));
+    return d.toISOString().slice(0, 10);
+  }
+  return String(val);
+};
+
 const mapRow = (row: any): Partial<Subaffidamento> => ({
   id: String(row['ID'] || ''),
   stato: String(row['Stato'] || ''),
@@ -71,8 +83,8 @@ const mapRow = (row: any): Partial<Subaffidamento> => ({
   societaCommittente: String(row['Società Committente'] || ''),
   socComm: String(row['Società Committente'] || ''),
   oggetto: String(row['Oggetto'] || ''),
-  dataInizioContratto: String(row['Data Inizio Contratto'] || ''),
-  dataFineContratto: String(row['Data Fine Contratto'] || ''),
+  dataInizioContratto: excelDate(row['Data Inizio Contratto']),
+  dataFineContratto: excelDate(row['Data Fine Contratto']),
   valuta: String(row['Valuta'] || ''),
   appaltatore: String(row['Appaltatore'] || ''),
   app: String(row['Appaltatore'] || ''),
@@ -85,13 +97,13 @@ const mapRow = (row: any): Partial<Subaffidamento> => ({
   noteAppaltatore: String(row['Note Appaltatore'] || ''),
   oggettoRichiesta: String(row['Oggetto Richiesta'] || ''),
   tipo: (String(row['Tipologia'] || 'Subappalto')) as 'Subappalto' | 'Subcontratto',
-  dataCreazione: String(row['Data Creazione'] || ''),
-  inserito: String(row['Data Creazione'] || format(new Date(), 'yyyy-MM-dd')),
-  dataInizio: String(row['Data Inizio'] || ''),
-  inizio: String(row['Data Inizio'] || ''),
-  dataFine: String(row['Data Fine'] || ''),
-  scadenza: String(row['Data Fine'] || ''),
-  primaDataAutorizzazione: String(row['Prima data di Autorizzazione'] || ''),
+  dataCreazione: excelDate(row['Data Creazione']),
+  inserito: excelDate(row['Data Creazione']) || format(new Date(), 'yyyy-MM-dd'),
+  dataInizio: excelDate(row['Data Inizio']),
+  inizio: excelDate(row['Data Inizio']),
+  dataFine: excelDate(row['Data Fine']),
+  scadenza: excelDate(row['Data Fine']),
+  primaDataAutorizzazione: excelDate(row['Prima data di Autorizzazione']),
   contractHolder: String(row['Contract Holder'] || ''),
   importoRichiestoValuta: String(row['Importo richiesto in valuta'] || ''),
   importoRichiestoEuro: String(row['Importo richiesto in euro'] || ''),
@@ -108,7 +120,8 @@ const mapRow = (row: any): Partial<Subaffidamento> => ({
   antimafia: String(row['Antimafia'] || ''),
   nominativiChecklist: String(row['Nominativi Checklist'] || ''),
   richiestoNullaosta: row['Richiesto nullaosta'] === true || row['Richiesto nullaosta'] === 'TRUE',
-  dataUltimoAggiornamento: String(row['Data Ultimo Aggiornamento'] || ''),
+  protocolloLegalita: row['Protocollo di Legalità'] === true || row['Protocollo di Legalità'] === 'TRUE',
+  dataUltimoAggiornamento: excelDate(row['Data Ultimo Aggiornamento']),
   allegatiScaduti: row['Allegati Scaduti'] === true || row['Allegati Scaduti'] === 'TRUE',
   protocolloNpa: String(row['Protocollo NPA'] || ''),
   esitoProtocolloNpa: String(row['Esito Protocollo NPA'] || ''),
@@ -120,8 +133,30 @@ const mapRow = (row: any): Partial<Subaffidamento> => ({
   cc: String(row['CC'] || ''),
 });
 
+const trafficLight = (val: string): string => {
+  if (val === 'G') return 'Conforme';
+  if (val === 'Y') return 'Richiesta Informazioni';
+  if (val === 'R') return 'Non Conforme';
+  return '';
+};
+
+const excelDateToISO = (val: any): string => {
+  if (!val) return '';
+  const n = Number(val);
+  if (!n || isNaN(n) || n < 1) return typeof val === 'string' ? val : '';
+  return new Date(Math.round((n - 25569) * 86400 * 1000)).toISOString().split('T')[0];
+};
+
+const esitoPrio = (esito: string): 'Alta' | 'Media' | 'Bassa' => {
+  if (['Scaduto', 'Non Conforme'].includes(esito)) return 'Alta';
+  if (['Richiesta Informazioni', 'In Verifica'].includes(esito)) return 'Media';
+  return 'Bassa';
+};
+
+
 const ImportaExcel: React.FC = () => {
-  const { subaffidamenti, setSubaffidamenti, addActivity } = useData();
+  const navigate = useNavigate();
+  const { subaffidamenti, setSubaffidamenti, documenti, setDocumenti, appaltatori, setAppaltatori, followUps, setFollowUps, addActivity } = useData();
   const { user } = useAuth();
 
   const [step, setStep] = useState<'upload' | 'preview' | 'review' | 'importing' | 'success'>('upload');
@@ -129,6 +164,7 @@ const ImportaExcel: React.FC = () => {
   const [progress, setProgress] = useState(0);
   const [summaryStats, setSummaryStats] = useState({ nuovi: 0, aggiornati: 0, mantenuti: 0, saltati: 0, appaltatori: 0, documenti: 0 });
   const [importLog, setImportLog] = useState<string[]>([]);
+  const [logOpen, setLogOpen] = useState(false);
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [bulkAction, setBulkAction] = useState<DupAction | null>(null);
 
@@ -243,33 +279,198 @@ const ImportaExcel: React.FC = () => {
         const log: string[] = [];
 
         setSubaffidamenti(prev => {
-          const updated = [...prev];
+          // Map-based upsert: ID è la chiave univoca.
+          // Importare lo stesso file N volte produce sempre lo stesso risultato.
+          const byId = new Map<string, Subaffidamento>(prev.map(s => [s.id, s]));
+
           for (const row of parsedRows) {
-            const { _status, _existingIdx, _dupAction, _changedFields, ...record } = row;
+            const { _status, _dupAction, _changedFields, ...record } = row as any;
+            const rid = String(record.id || '');
+
             if (_status === 'new') {
-              updated.unshift(record as Subaffidamento);
+              byId.set(rid, record as Subaffidamento);
               nuovi++;
-              log.push(`— Inserito: ${record.id}`);
+              log.push(`— Inserito: ${rid}`);
             } else if (_status === 'dup_same') {
               mantenuti++;
-              log.push(`— Mantenuto: ${record.id} (nessuna modifica)`);
+              log.push(`— Mantenuto: ${rid} (nessuna modifica)`);
             } else if (_status === 'dup_changed') {
-              if (_dupAction === 'update' && _existingIdx !== null) {
-                updated[_existingIdx] = { ...updated[_existingIdx], ...record } as Subaffidamento;
+              if (_dupAction === 'update') {
+                byId.set(rid, { ...byId.get(rid)!, ...record } as Subaffidamento);
                 aggiornati++;
-                log.push(`— Aggiornato: ${record.id} (${_changedFields.length} campi)`);
+                log.push(`— Aggiornato: ${rid} (${_changedFields?.length ?? 0} campi)`);
               } else {
                 saltati++;
-                log.push(`— Saltato: ${record.id}`);
+                log.push(`— Saltato: ${rid}`);
               }
             }
           }
-          return updated;
+
+          return Array.from(byId.values());
         });
 
-        setSummaryStats({ nuovi, aggiornati, mantenuti, saltati, appaltatori: 0, documenti: 0 });
+        // ── Genera documenti dai campi Excel ─────────────────────
+        const toUpsertDocs: DocumentoControllo[] = [];
+        const seenDocKeys = new Set<string>();
+        const now = new Date().toISOString();
+
+        const pushDoc = (d: DocumentoControllo) => {
+          const key = `${d.sap}|${d.doc}`;
+          if (seenDocKeys.has(key) || !d.esito) return;
+          seenDocKeys.add(key);
+          toUpsertDocs.push(d);
+        };
+
+        for (const row of parsedRows) {
+          const sap = row.idSapContratto || row.idSap || '';
+          const app = row.appaltatore || row.app || '';
+          const ch = row.ch || '';
+          if (!sap || !app) continue;
+          const scadFine = excelDateToISO(row.dataFine || row.scadenza);
+
+          // 1. Allegati Contrattuali (G/Y/R + flag Scaduti)
+          const allegVal = row.allegati || '';
+          const allegScad = row.allegatiScaduti;
+          if (allegVal || allegScad) {
+            let esito = trafficLight(allegVal);
+            if (allegScad) esito = 'Scaduto';
+            if (esito) pushDoc({ app, sap, doc: 'Allegati Contrattuali', esito, scad: allegScad ? '' : scadFine, prio: esitoPrio(esito), responsabile: ch, ts: now, utente: 'Import Excel' });
+          }
+
+          // 2. Antimafia (G/Y/R)
+          const antimafiaVal = row.antimafia || '';
+          if (antimafiaVal) {
+            const esito = trafficLight(antimafiaVal);
+            if (esito) pushDoc({ app, sap, doc: 'Antimafia', esito, scad: '', prio: esitoPrio(esito), responsabile: ch, ts: now, utente: 'Import Excel' });
+          }
+
+          // 3. Protocollo NPA (OK/KO + motivazione)
+          const protNpa = row.protocolloNpa || '';
+          if (protNpa) {
+            const esitoRaw = row.esitoProtocolloNpa || '';
+            const esito = esitoRaw === 'OK' ? 'Conforme' : esitoRaw === 'KO' ? 'Non Conforme' : 'In Verifica';
+            pushDoc({ app, sap, doc: 'Protocollo NPA', esito, scad: '', nota: row.motivazioneProtocollo || '', prio: esitoPrio(esito), responsabile: ch, ts: now, utente: 'Import Excel' });
+          }
+
+          // 4. Protocollo di Legalità (boolean)
+          if (row.protocolloLegalita) {
+            pushDoc({ app, sap, doc: 'Protocollo di Legalità', esito: 'In Verifica', scad: '', prio: 'Media', responsabile: ch, ts: now, utente: 'Import Excel' });
+          }
+
+          // 5. Stato Qualifica → Idoneità tecnico professionale
+          const statoQual = row.statoQualifica || '';
+          if (statoQual) {
+            let esito = '';
+            if (statoQual.startsWith('Q')) esito = 'Conforme';
+            else if (statoQual.startsWith('D')) esito = 'Non Conforme';
+            else if (statoQual === 'Not Assigned') esito = 'Richiesta Informazioni';
+            if (esito) pushDoc({ app, sap, doc: 'Idoneità tecnico professionale', esito, scad: scadFine, prio: esitoPrio(esito), responsabile: ch, ts: now, utente: 'Import Excel' });
+          }
+        }
+
+        const nuoviDocCount = toUpsertDocs.length;
+
+        setDocumenti(prev => {
+          // Map-based upsert per documenti: chiave sap|doc (un documento per SAP-pratica)
+          const byKey = new Map<string, DocumentoControllo>(prev.map(d => [`${d.sap}|${d.doc}`, d]));
+          for (const doc of toUpsertDocs) {
+            const key = `${doc.sap}|${doc.doc}`;
+            const existing = byKey.get(key);
+            byKey.set(key, existing
+              ? { ...existing, esito: doc.esito, ...(doc.nota ? { nota: doc.nota } : {}), ts: doc.ts }
+              : doc
+            );
+          }
+          return Array.from(byKey.values());
+        });
+
+        // ── Genera appaltatori unici ──────────────────────────────
+        const seenAppKeys = new Set<string>();
+        const existingAppSapSet = new Set(appaltatori.map(a => a.idSap || a.codApp || '').filter(Boolean));
+        const nuoviApp: Appaltatore[] = [];
+
+        for (const row of parsedRows) {
+          const appNome = row.appaltatore || row.app || '';
+          const codSap = row.codiceSapAppaltatore || '';
+          const appKey = codSap || appNome;
+          if (!appKey || seenAppKeys.has(appKey)) continue;
+          seenAppKeys.add(appKey);
+          if (!existingAppSapSet.has(codSap)) {
+            nuoviApp.push({
+              nome: appNome,
+              idSap: codSap,
+              codApp: codSap,
+              settore: '',
+              tipo: 'Subappaltatore',
+              referente: '',
+              email: '',
+              tel: '',
+              piva: '',
+              sede: '',
+              note: '',
+              aggiunto: new Date().toISOString().split('T')[0],
+              dataInizio: excelDateToISO(row.dataInizioContratto),
+              dataFine: excelDateToISO(row.dataFineContratto),
+            });
+          }
+        }
+        if (nuoviApp.length > 0) setAppaltatori(prev => [...nuoviApp, ...prev]);
+
+        // ── FollowUp + Piano d'Azione ────────────────────────────
+        // Solo Scaduto e Non Conforme generano un sollecito automatico.
+        // "Richiesta Informazioni" (es. statoQualifica Not Assigned) non è un problema urgente.
+        const criticalEsitos = new Set(['Scaduto', 'Non Conforme']);
+        const toUpsertFu = new Map<string, FollowUp>(); // key = praticaId|doc
+
+        for (const row of parsedRows) {
+          const praticaId = row.id || '';
+          const app = row.appaltatore || row.app || '';
+          const sub = row.subfornitore || row.sub || '';
+          const sap = row.idSapContratto || row.idSap || '';
+          if (!praticaId || !app || !sap) continue;
+
+          const tryAdd = (doc: string, esito: string) => {
+            if (!esito || !criticalEsitos.has(esito)) return;
+            const key = `${praticaId}|${doc}`;
+            if (!toUpsertFu.has(key)) {
+              toUpsertFu.set(key, {
+                id: `fu_imp_${praticaId}_${doc.replace(/\s+/g, '_')}`,
+                praticaId, appaltatore: app, subfornitore: sub,
+                documento: doc, stato: 'da_contattare',
+                dataCreazione: now, gestitoDa: 'Import Excel',
+              });
+            }
+          };
+
+          const allegVal = row.allegati || '';
+          if (allegVal || row.allegatiScaduti) {
+            let e = trafficLight(allegVal);
+            if (row.allegatiScaduti) e = 'Scaduto';
+            tryAdd('Allegati Contrattuali', e);
+          }
+          if (row.antimafia) tryAdd('Antimafia', trafficLight(row.antimafia));
+          if (row.protocolloNpa) {
+            const r = row.esitoProtocolloNpa || '';
+            tryAdd('Protocollo NPA', r === 'KO' ? 'Non Conforme' : '');
+          }
+          const sq = row.statoQualifica || '';
+          if (sq.startsWith('D')) tryAdd('Idoneità tecnico professionale', 'Non Conforme');
+        }
+
+        if (toUpsertFu.size > 0) {
+          setFollowUps(prev => {
+            // Map-based upsert: reimportare lo stesso file non duplica i follow-up
+            const byKey = new Map<string, FollowUp>(prev.map(f => [`${f.praticaId}|${f.documento}`, f]));
+            toUpsertFu.forEach((fu, key) => {
+              if (!byKey.has(key)) byKey.set(key, fu);
+            });
+            return Array.from(byKey.values());
+          });
+        }
+
+        setSummaryStats({ nuovi, aggiornati, mantenuti, saltati, appaltatori: nuoviApp.length, documenti: nuoviDocCount });
         setImportLog(log);
-        addActivity('import', 'Importazione Excel', `Import: ${nuovi} nuovi, ${aggiornati} aggiornati, ${mantenuti} mantenuti, ${saltati} saltati`, `File elaborato — ${parsedRows.length} righe totali`);
+        addActivity('import', 'Importazione Excel', `Import: ${nuovi} sub, ${nuoviDocCount} documenti, ${nuoviApp.length} appaltatori, ${toUpsertFu.size} solleciti`, `File elaborato — ${parsedRows.length} righe totali`);
         setStep('success');
       }
     }, 80);
@@ -792,24 +993,30 @@ const ImportaExcel: React.FC = () => {
 
             {/* Log importazione */}
             <div className="border-t border-white/5">
-              <div className="px-5 py-3 bg-white/2 flex items-center gap-2">
+              <button
+                onClick={() => setLogOpen(o => !o)}
+                className="w-full px-5 py-3 bg-white/2 flex items-center gap-2 hover:bg-white/4 transition-colors"
+              >
                 <Terminal size={12} className="text-[#3a5a7a]" />
-                <span className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest">Log Importazione</span>
-              </div>
-              <div className="max-h-36 overflow-y-auto custom-scrollbar px-5 py-4 space-y-2 bg-[#0a1628]">
-                {importLog.slice(0, 50).map((l, i) => (
-                  <div key={i} className="text-[11px] text-[#4a6a8a] font-mono">{l}</div>
-                ))}
-              </div>
+                <span className="text-[10px] font-bold text-[#3a5a7a] uppercase tracking-widest flex-1 text-left">Log Importazione</span>
+                <ChevronDown size={13} className={`text-[#3a5a7a] transition-transform ${logOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {logOpen && (
+                <div className="max-h-36 overflow-y-auto custom-scrollbar px-5 py-4 space-y-2 bg-[#0a1628]">
+                  {importLog.slice(0, 50).map((l, i) => (
+                    <div key={i} className="text-[11px] text-[#4a6a8a] font-mono">{l}</div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
           {/* Bottoni fuori dalla card */}
           <div className="flex gap-3 justify-center pb-2">
-            <button onClick={() => { window.location.href = '/subaffidamenti'; }} className="h-11 px-6 bg-[#534AB7] text-white rounded-xl text-sm font-bold hover:bg-[#6358cc] transition-all flex items-center gap-2 shadow-lg shadow-[#534AB7]/20">
+            <button onClick={() => navigate('/subaffidamenti')} className="h-11 px-6 bg-[#534AB7] text-white rounded-xl text-sm font-bold hover:bg-[#6358cc] transition-all flex items-center gap-2 shadow-lg shadow-[#534AB7]/20">
               <Link size={15} /> Vai a Subaffidamenti
             </button>
-            <button onClick={() => { window.location.href = '/'; }} className="h-11 px-6 bg-[#1D9E75] text-white rounded-xl text-sm font-bold hover:bg-[#17845e] transition-all flex items-center gap-2 shadow-lg shadow-[#1D9E75]/20">
+            <button onClick={() => navigate('/dashboard')} className="h-11 px-6 bg-[#1D9E75] text-white rounded-xl text-sm font-bold hover:bg-[#17845e] transition-all flex items-center gap-2 shadow-lg shadow-[#1D9E75]/20">
               <LayoutGrid size={15} /> Vai alla Dashboard
             </button>
             <button onClick={() => { setStep('upload'); setParsedRows([]); setProgress(0); setImportLog([]); }} className="h-11 px-6 bg-white/5 border border-white/10 rounded-xl text-[#8ab0c8] text-sm font-bold hover:bg-white/10 transition-all flex items-center gap-2">

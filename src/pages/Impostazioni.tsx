@@ -140,8 +140,11 @@ const Impostazioni: React.FC = () => {
 
   const handleResetData = (type: 'subdata' | 'anagrafica' | 'all') => {
     if (!confirm(type === 'all' ? 'RESET COMPLETO: tutti i dati verranno eliminati. Continuare?' : `Reset ${type}?`)) return;
+    const ALL_KEYS = ['subdata','anagrafica','docdata','followups','cal_events','activity_log','storico','pser_activities'];
     if (type === 'all') {
-      ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem(k));
+      ALL_KEYS.forEach(k => localStorage.removeItem(k));
+    } else if (type === 'subdata') {
+      ['subdata','docdata','followups'].forEach(k => localStorage.removeItem(k));
     } else {
       localStorage.removeItem(type);
     }
@@ -698,7 +701,7 @@ const Impostazioni: React.FC = () => {
             <button
               onClick={() => {
                 if (resetConfirmInput !== 'RESET CONFERMATO') return;
-                ['subdata','anagrafica','docdata','cal_events','activity_log','storico'].forEach(k => localStorage.removeItem(k));
+                ['subdata','anagrafica','docdata','followups','cal_events','activity_log','storico','pser_activities'].forEach(k => localStorage.removeItem(k));
                 setShowResetModal(false);
                 setResetConfirmInput('');
                 window.location.reload();

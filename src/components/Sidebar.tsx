@@ -1,15 +1,15 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  FileText, 
-  Link as LinkIcon, 
-  Building2, 
-  History, 
-  Download, 
-  Upload, 
-  Settings, 
-  LogOut 
+import {
+  LayoutDashboard,
+  Link as LinkIcon,
+  Building2,
+  Bell,
+  Download,
+  Upload,
+  Settings,
+  LogOut,
+  BookUser,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
@@ -25,10 +25,10 @@ const Sidebar: React.FC = () => {
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', section: 'Principale' },
-    { to: '/controllo-documentale', icon: FileText, label: 'Controllo Documentale' },
-    { to: '/subaffidamenti', icon: LinkIcon, label: 'Subaffidamenti' },
-    { to: '/anagrafica', icon: Building2, label: 'Anagrafica', section: 'Gestione' },
-    { to: '/storico', icon: History, label: 'Storico Attivita' },
+    { to: '/storico', icon: Bell, label: 'Gestione Solleciti' },
+    { to: '/rubrica', icon: BookUser, label: 'Rubrica Contatti' },
+    { to: '/subaffidamenti', icon: LinkIcon, label: 'Subaffidamenti', section: 'Gestione' },
+    { to: '/anagrafica', icon: Building2, label: 'Anagrafica' },
     { to: '/report', icon: Download, label: 'Report & Export' },
     { to: '/importa', icon: Upload, label: 'Importa Excel', section: 'Sistema' },
     { to: '/impostazioni', icon: Settings, label: 'Impostazioni' },

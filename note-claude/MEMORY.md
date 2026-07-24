@@ -1,4 +1,0 @@
-- [Monthly Report ENI workflow](project_monthly_report_eni.md) — recurring report for Rosalinda (ENI), monthly steps, multi-sito is real not a bug
-- [Monthly Report snapshot fix](project_monthly_report_snapshot_fix.md) — "NUOVO" comparison moved from localStorage to shared Supabase table
-- [Deploy & env reference](reference_deploy_and_env.md) — nvm PATH quirk, deploy.sh mechanics, two git remotes (origin vs pser)
-- [Workflow preferences](feedback_workflow_preferences.md) — sequential ops only, Pietro is non-technical, needs hand-holding
